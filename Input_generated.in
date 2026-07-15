@@ -1,0 +1,117 @@
+##Geometrical dimensions of the simulation domain
+DIMENSION = 2;
+MESH_X = 100;
+MESH_Y = 100;
+MESH_Z = 1;
+##Discretization, space and time
+DELTA_X = 3e-08;
+DELTA_Y = 3e-08;
+DELTA_Z = 3e-08;
+DELTA_t = 1.62e-07;
+##Number of phases and components
+NUMPHASES = 3;
+NUMCOMPONENTS = 2;
+##Running and saving information
+NTIMESTEPS = 100000;
+NSMOOTH = 10;
+SAVET = 10000;
+RESTART = 0;
+STARTTIME = 0;
+numworkers = 4;
+TRACK_PROGRESS = 10;
+##Component and Phase names
+COMPONENTS = {Nb, Ni};
+PHASES = {alpha, beta_1, liquid};
+##Material properties
+GAMMA = {0.1, 0.1, 0.1};
+R = 8.314;
+V = 1e-05;
+DIFFUSIVITY = {1, 0, 0};
+DIFFUSIVITY = {1, 1, 0};
+DIFFUSIVITY = {1, 1, 1e-09};
+EIGEN_STRAIN = {0, 0.01, 0.01, 0, 0, 0, 0};
+EIGEN_STRAIN = {1, 0.01, 0.01, 0, 0, 0, 0};
+EIGEN_STRAIN = {1, 0.01, 0.01, 0, 0, 0, 0};
+VOIGT_ISOTROPIC = {0, 270, 187.5, 125};
+VOIGT_ISOTROPIC = {1, 270, 187.5, 125};
+VOIGT_ISOTROPIC = {1, 270, 187.5, 125};
+##Boundary conditions
+BOUNDARY = {phi, 1, 1, 1, 1, 0, 0};
+BOUNDARY = {mu, 1, 1, 1, 1, 0, 0};
+BOUNDARY = {c, 1, 1, 1, 1, 0, 0};
+BOUNDARY = {T, 1, 1, 1, 1, 0, 0};
+BOUNDARY_VALUE = {phi, 0, 0, 0, 0, 0, 0};
+BOUNDARY_VALUE = {mu, 0, 0, 0, 0, 0, 0};
+BOUNDARY_VALUE = {c, 0, 0, 0, 0, 0, 0};
+BOUNDARY_VALUE = {T, 0, 0, 0, 0, 0, 0};
+##Model-specific parameters
+ISOTHERMAL = 1;
+BINARY = 1;
+DILUTE = 0;
+T = 1616;
+WRITEFORMAT = ASCII;
+WRITEHDF5 = 1;
+epsilon = {1.2e-07, 1.2e-07, 1.2e-07};
+tau = {1.31, 1.31, 1.31};
+Tau = {0.28, 0.28, 0.28};
+##Anisotropy
+Function_anisotropy = 1;
+Anisotropy_type = 4;
+dab = {0.01, 0.01, 0.01};
+Rotation_matrix = {0, 1, 0, 0, 45};
+##Potential function
+Function_W = 1;
+Gamma_abc = {0.1};
+##Domain shifting
+Shift = 0;
+Shiftj = 30;
+##Composition output
+Writecomposition = 1;
+##Noise
+Noise_phasefield = 1;
+Amp_Noise_Phase = 0.1;
+##Temperature
+Equilibrium_temperature = 1622;
+Filling_temperature = 1616;
+Tempgrady = {856.95, 0.1, 1e-05, 0, 0.00032};
+##Free energy function
+Function_F = 4;
+A = {0, 1};
+A = {1, 1};
+A = {1, 1};
+ceq = {0, 0, 0.0793806};
+ceq = {0, 1, 0.100532};
+ceq = {1, 1, 0.100532};
+ceq = {1, 0, 0.100532};
+ceq = {0, 2, 0.5};
+ceq = {1, 2, 0.5};
+ceq = {2, 0, 0.5};
+ceq = {2, 1, 0.5};
+ceq = {2, 2, 0.5};
+cfill = {0, 0, 0.0793806};
+cfill = {0, 1, 0.100532};
+cfill = {1, 1, 0.100532};
+cfill = {1, 0, 0.100532};
+cfill = {0, 2, 0.5};
+cfill = {1, 2, 0.5};
+cfill = {2, 0, 0.5};
+cfill = {2, 1, 0.5};
+cfill = {2, 2, 0.5};
+c_guess = {0, 0, 0.08367};
+c_guess = {0, 1, 0.105351};
+c_guess = {1, 1, 0.105351};
+c_guess = {1, 0, 0.105351};
+c_guess = {0, 2, 0.475};
+c_guess = {1, 2, 0.475};
+c_guess = {2, 0, 0.475};
+c_guess = {2, 1, 0.475};
+c_guess = {2, 2, 0.475};
+slopes = {0, 0, 666};
+slopes = {0, 1, 333};
+slopes = {1, 0, 333};
+slopes = {1, 1, 333};
+##Thermodynamic database
+num_thermo_phases = 2;
+tdbfname = alzn_mey.tdb;
+tdb_phases = {FCC_A1, LIQUID};
+phase_map = {FCC_A1, FCC_A1, LIQUID};

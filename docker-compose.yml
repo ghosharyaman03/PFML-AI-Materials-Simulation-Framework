@@ -1,0 +1,25 @@
+services:
+  simulation:
+    container_name: pfml_simulation
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+     - ./run_agents.py:/app/run_agents.py
+     - ./microsim_gp/DATA:/app/microsim_gp/DATA
+     - ./microsim_gp/Example_Systems:/app/microsim_gp/Example_Systems
+     - ./microsim_gp/tdbs:/app/microsim_gp/tdbs
+     - ./microsim_gp/Input_generated.in:/app/microsim_gp/Input_generated.in
+     - ./microsim_gp/Filling_generated.in:/app/microsim_gp/Filling_generated.in
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MICROSIM_DIR=/app/microsim_gp
+      - MPI_NP=4
+      - MPI_GRID=2 2
+      # Optional: set your Gemini API key for LLM-assisted prompt parsing
+      # Without it, the regex parser handles most requests fine.
+      - GEMINI_API_KEY=AQ.Ab8RN6IZjR_vEGYPHoA4dKZgZSeiyZMt_toH6uH-FQ__yPP1DA
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib
+    stdin_open: true
+    tty: true
+    command: python3 /app/run_agents.py

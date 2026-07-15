@@ -1,0 +1,1200 @@
+#ifndef FILE_WRITER_H_
+#define FILE_WRITER_H_
+
+#include <arpa/inet.h>
+#include <endian.h>
+#include <stdint.h>
+
+#define  IS_BIG_ENDIAN     (1 == htons(1))
+#define  IS_LITTLE_ENDIAN  (!IS_BIG_ENDIAN)
+
+double swap_bytes(double value) {
+  double  src_num = value;
+  int64_t tmp_num = htobe64(le64toh(*(int64_t*)&src_num));
+  double  dst_num = *(double*)&tmp_num;
+}
+
+void writetofile_serial2D(struct fields* gridinfo, char *argv[], long t);
+void writetofile_serial2D_binary(struct fields* gridinfo, char *argv[], long t);
+void write_cells_vtk_2D(FILE *fp, struct fields *gridinfo);
+void write_cells_vtk_2D_binary(FILE *fp, struct fields *gridinfo);
+void writetofile_mpi2D(struct fields* gridinfo, char *argv[], long t);
+void writetofile_mpi2D_binary(struct fields* gridinfo, char *argv[], long t);
+void write_cells_vtk_2D_mpi(FILE *fp, struct fields* gridinfo);
+void write_cells_vtk_2D_mpibinary(FILE *fp, struct fields* gridinfo);
+void writetofile_mpi2D_hdf5(struct fields* gridinfo, char *argv[], long t);
+void write_cells_hdf5_2D_mpi(hid_t file_id, struct fields* gridinfo);
+
+/// New additons
+void write_cells_hdf5_2D_mpi_new(hid_t file_id, struct fields* gridinfo);
+
+void writetofile_serial2D(struct fields* gridinfo, char *argv[], long t) {
+  long x,y,z;
+  long gidy;
+  FILE *fp;
+  char name[1000];
+  double composition;
+  long b, k;
+  sprintf(name,"DATA/%s_%ld.vtk",argv[3], t);
+  fp=fopen(name,"w");
+  write_cells_vtk_2D(fp, gridinfo);
+  fclose(fp);
+}
+void writetofile_serial2D_binary(struct fields* gridinfo, char *argv[], long t) {
+  long x,y,z;
+  long gidy;
+  FILE *fp;
+  char name[1000];
+  double composition;
+  long b, k;
+  sprintf(name,"DATA/%s_%ld.vtk",argv[3], t);
+  fp=fopen(name,"wb");
+  write_cells_vtk_2D_binary(fp, gridinfo);
+  fclose(fp);
+}
+void writetofile_mpi2D(struct fields* gridinfo, char *argv[], long t) {
+  long x,y,z;
+  long gidy;
+  FILE *fp;
+  char name[1000];
+  double composition;
+  long b, k;
+  sprintf(name,"DATA/Processor_%d/%s_%ld.vtk",taskid, argv[3], t);
+  fp=fopen(name,"w");
+  write_cells_vtk_2D_mpi(fp, gridinfo);
+  fclose(fp);
+}
+void writetofile_mpi2D_binary(struct fields* gridinfo, char *argv[], long t) {
+  long x,y,z;
+  long gidy;
+  FILE *fp;
+  char name[1000];
+  double composition;
+  long b, k;
+  sprintf(name,"DATA/Processor_%d/%s_%ld.vtk",taskid, argv[3], t);
+  fp=fopen(name,"wb");
+  write_cells_vtk_2D_mpibinary(fp, gridinfo);
+  fclose(fp);
+}
+
+void writetofile_mpi2D_hdf5(struct fields* gridinfo, char *argv[], long t)
+{
+  hid_t file_id;
+  hid_t plist_id;
+  
+  char filename_hdf5[1000];
+  sprintf(filename_hdf5, "DATA/%s_%ld.h5", argv[3], t);
+
+  /* Set up file access property list with parallel I/O access*/
+  plist_id = H5Pcreate(H5P_FILE_ACCESS);
+  H5Pset_fapl_mpio(plist_id, MPI_COMM_WORLD, MPI_INFO_NULL);
+  
+  file_id = H5Fcreate(filename_hdf5, H5F_ACC_TRUNC, H5P_DEFAULT, plist_id);
+  H5Pclose(plist_id); // we'll use this plist_id again later 
+  
+  if (USE_NEW_IO_BUFF)
+  {
+	write_cells_hdf5_2D_mpi_new(file_id, gridinfo);
+  }
+  else
+  {
+	write_cells_hdf5_2D_mpi(file_id, gridinfo);
+  }
+    
+  status_h = H5Fclose(file_id);
+}
+
+void readfromfile_mpi2D_hdf5(struct fields* gridinfo, char *argv[], long numworkers, long t) {
+  hid_t file_id;
+  hid_t plist_id;
+  
+  char filename_hdf5[1000];
+  
+  //every processor creates a file collectively
+//   sprintf(filename_hdf5, "DATA/%s_%ld_%ld.h5", argv[3], numworkers, t);
+  sprintf(filename_hdf5, "DATA/%s_%ld.h5", argv[3], t);
+  /* Set up file access property list with parallel I/O access*/
+  plist_id = H5Pcreate(H5P_FILE_ACCESS);
+  H5Pset_fapl_mpio(plist_id, MPI_COMM_WORLD, MPI_INFO_NULL);
+  
+//   file_id = H5Fcreate(filename_hdf5, H5F_ACC_TRUNC, H5P_DEFAULT, plist_id);
+  file_id = H5Fopen(filename_hdf5, H5F_ACC_RDONLY, plist_id);
+  H5Pclose(plist_id); // we'll use this plist_id again later 
+  
+  read_cells_hdf5_2D_mpi(file_id, gridinfo);
+  
+  status_h = H5Fclose(file_id);
+}
+
+void readfromfile_mpi2D(struct fields* gridinfo, char *argv[], long t) {
+  long x,y,z;
+  long gidy;
+  FILE *fp;
+  char name[1000];
+  double composition;
+  long b, k;
+  sprintf(name,"DATA/Processor_%d/%s_%ld.vtk",taskid, argv[3], t);
+  fp=fopen(name,"r");
+  read_cells_vtk_2D_mpi(fp, gridinfo);
+  fclose(fp);
+}
+void readfromfile_mpi2D_binary(struct fields* gridinfo, char *argv[], long t) {
+  long x,y,z;
+  long gidy;
+  FILE *fp;
+  char name[1000];
+  double composition;
+  long b, k;
+  sprintf(name,"DATA/Processor_%d/%s_%ld.vtk",taskid, argv[3], t);
+  fp=fopen(name,"rb");
+  read_cells_vtk_2D_mpibinary(fp, gridinfo);
+  fclose(fp);
+}
+
+void write_cells_vtk_2D(FILE *fp, struct fields *gridinfo) {
+  long x, y, z, index;
+  long a, b;
+  long k;
+  double composition;
+  fprintf(fp,"# vtk DataFile Version 3.0\n");
+  fprintf(fp,"Microsim_fields\n");
+  fprintf(fp,"ASCII\n");
+  fprintf(fp,"DATASET STRUCTURED_POINTS\n");
+  fprintf(fp,"DIMENSIONS %ld %ld %ld\n",MESH_Y, MESH_X, (long)1);
+  fprintf(fp,"ORIGIN 0 0 0\n");
+  fprintf(fp,"SPACING %le %le %le\n",deltax, deltay, deltaz);
+  fprintf(fp,"POINT_DATA %ld\n",(long)MESH_X*(long)MESH_Y);
+//   fprintf(fp,"FIELD PHASEFIELD 2\n");
+//   fprintf(fp,"PHI[0] 1 %ld double\n", (long)Nx*(long)Ny);
+  for (a=0; a < NUMPHASES; a++) {
+    fprintf(fp,"SCALARS %s double 1\n",Phases[a]);
+    fprintf(fp,"LOOKUP_TABLE default\n");
+    for (x=start[X]; x<=end[X]; x++) {
+      for (z=start[Z]; z <= end[Z]; z++) {
+        for (y=start[Y]; y <= end[Y]; y++) {
+          index = x*layer_size + z*rows_y + y;
+          fprintf(fp, "%le\n",gridinfo[index].phia[a]);
+        }
+      }
+    }
+    fprintf(fp,"\n");
+  }
+  for (k=0; k < NUMCOMPONENTS-1; k++) {
+    fprintf(fp,"SCALARS Mu_%s double 1\n",Components[k]);
+    fprintf(fp,"LOOKUP_TABLE default\n");
+    for (x=start[X]; x<=end[X]; x++) {
+      for (z=start[Z]; z <= end[Z]; z++) {
+        for (y=start[Y]; y <= end[Y]; y++) {
+          index = x*layer_size + z*rows_y + y;
+          fprintf(fp, "%le\n",gridinfo[index].compi[k]);
+        }
+      }
+    }
+    fprintf(fp,"\n");
+  }
+//   if(WRITECOMPOSITION) {
+    for (k=0; k < NUMCOMPONENTS-1; k++) {
+      fprintf(fp,"SCALARS Composition_%s double 1\n",Components[k]);
+      fprintf(fp,"LOOKUP_TABLE default\n");
+      for (x=start[X]; x<=end[X]; x++) {
+        for (z=start[Z]; z <= end[Z]; z++) {
+          for (y=start[Y]; y <= end[Y]; y++) {
+            index = x*layer_size + z*rows_y + y;
+            fprintf(fp, "%le\n",gridinfo[index].composition[k]);
+//             composition=0.0;
+//             if(ISOTHERMAL) {
+//               for (b=0; b < NUMPHASES; b++) {
+//                 composition += c_mu(gridinfo[index].compi, T, b, k)*hphi(gridinfo[index].phia, b);
+//               }
+//               fprintf(fp,"%le \n",composition);
+//             } else {
+//               for (b=0; b < NUMPHASES; b++) {
+//                 composition += c_mu(gridinfo[index].compi, gridinfo[index].temperature, b, k)*hphi(gridinfo[index].phia, b);
+//               }
+//               fprintf(fp,"%le \n",composition);
+//             }
+          }
+        }
+      }
+      fprintf(fp,"\n");
+    }
+//   }
+  if (!ISOTHERMAL) {
+    fprintf(fp,"SCALARS Temperature double 1\n");
+    fprintf(fp,"LOOKUP_TABLE default\n");
+    for (x=start[X]; x<=end[X]; x++) {
+      for (z=start[Z]; z <= end[Z]; z++) {
+        for (y=start[Y]; y <= end[Y]; y++) {
+          index = x*layer_size + z*rows_y + y;
+          fprintf(fp, "%le \n",gridinfo[index].temperature);
+        }
+      }
+    }
+  }
+}
+void write_cells_vtk_2D_binary(FILE *fp, struct fields *gridinfo) {
+  long x, y, z, index;
+  long a, b;
+  long k;
+  double composition;
+  char first_lines[50];
+  int length;
+  double value;
+  
+  fprintf(fp,"# vtk DataFile Version 3.0\n");
+  fprintf(fp,"Microsim_fields\n");
+  fprintf(fp,"BINARY\n");
+  fprintf(fp,"DATASET STRUCTURED_POINTS\n");
+  fprintf(fp,"DIMENSIONS %ld %ld %ld\n",MESH_Y, MESH_X, (long)1);
+  fprintf(fp,"ORIGIN 0 0 0\n");
+  fprintf(fp,"SPACING %le %le %le\n",deltax, deltay, deltaz);
+  fprintf(fp,"POINT_DATA %ld\n",(long)MESH_X*(long)MESH_Y);
+  
+  for (a=0; a < NUMPHASES; a++) {
+    fprintf(fp,"SCALARS %s double 1\n",Phases[a]);
+    fprintf(fp,"LOOKUP_TABLE default\n");
+    for (x=start[X]; x<=end[X]; x++) {
+      for (z=start[Z]; z <= end[Z]; z++) {
+        for (y=start[Y]; y <= end[Y]; y++) {
+          index = x*layer_size + z*rows_y + y;
+          if (IS_LITTLE_ENDIAN) {
+            value = swap_bytes(gridinfo[index].phia[a]);
+          } else {
+            value = gridinfo[index].phia[a];
+          }
+          fwrite(&value, sizeof(double), 1, fp);
+        }
+      }
+    }
+    fprintf(fp,"\n");
+  }
+  for (k=0; k < NUMCOMPONENTS-1; k++) {
+    fprintf(fp,"SCALARS Mu_%s double 1\n",Components[k]);
+    fprintf(fp,"LOOKUP_TABLE default\n");
+    for (x=start[X]; x<=end[X]; x++) {
+      for (z=start[Z]; z <= end[Z]; z++) {
+        for (y=start[Y]; y <= end[Y]; y++) {
+          index = x*layer_size + z*rows_y + y;
+          if (IS_LITTLE_ENDIAN) {
+            value = swap_bytes(gridinfo[index].compi[k]);
+          } else {
+            value = gridinfo[index].compi[k];
+          }
+          fwrite(&value, sizeof(double), 1, fp);
+        }
+      }
+    }
+   fprintf(fp,"\n");
+  }
+//   if(WRITECOMPOSITION) {
+    for (k=0; k < NUMCOMPONENTS-1; k++) {
+      fprintf(fp,"SCALARS Composition_%s double 1\n",Components[k]);
+      fprintf(fp,"LOOKUP_TABLE default\n");
+      for (x=start[X]; x<=end[X]; x++) {
+        for (z=start[Z]; z <= end[Z]; z++) {
+          for (y=start[Y]; y <= end[Y]; y++) {
+            index = x*layer_size + z*rows_y + y;
+//             composition=0.0;
+//             if(ISOTHERMAL) {
+//               for (b=0; b < NUMPHASES; b++) {
+//                 composition += c_mu(gridinfo[index].compi, T, b, k)*hphi(gridinfo[index].phia, b);
+//               }
+//               if (IS_LITTLE_ENDIAN) {
+//                 value = swap_bytes(composition);
+//               } else {
+//                 value = composition;
+//               }
+//               fwrite(&value, sizeof(double), 1, fp);
+//             } else {
+//               for (b=0; b < NUMPHASES; b++) {
+//                 composition += c_mu(gridinfo[index].compi, gridinfo[index].temperature, b, k)*hphi(gridinfo[index].phia, b);
+//               }
+//               if (IS_LITTLE_ENDIAN) {
+//                 value = swap_bytes(composition);
+//               } else {
+//                 value = composition;
+//               }
+//               fwrite(&value, sizeof(double), 1, fp);
+//             }
+            if (IS_LITTLE_ENDIAN) {
+              value = swap_bytes(gridinfo[index].composition[k]);
+            } else {
+              value = gridinfo[index].composition[k];
+            }
+            fwrite(&value, sizeof(double), 1, fp);
+          }
+        }
+      }
+      fprintf(fp,"\n");
+    }
+//   }
+  if (!ISOTHERMAL) {
+    fprintf(fp,"SCALARS Temperature double 1\n");
+    fprintf(fp,"LOOKUP_TABLE default\n");
+    for (x=start[X]; x<=end[X]; x++) {
+      for (z=start[Z]; z <= end[Z]; z++) {
+        for (y=start[Y]; y <= end[Y]; y++) {
+          index = x*layer_size + z*rows_y + y;
+          if(IS_LITTLE_ENDIAN) {
+            value = swap_bytes(gridinfo[index].temperature);
+          } else {
+            value = gridinfo[index].temperature;
+          }
+          fwrite(&value, sizeof(double), 1, fp);
+        }
+      }
+    }
+  }
+}
+void write_cells_vtk_2D_mpi(FILE *fp, struct fields* gridinfo) {
+  long x, y, z, index;
+  long a, b;
+  long k;
+  double composition;
+  long global_index;
+  fprintf(fp,"%ld\n",workers_mpi.rows[X]);
+  fprintf(fp,"%ld\n",workers_mpi.rows[Y]);
+  fprintf(fp,"%ld\n",workers_mpi.offset[X]);
+  fprintf(fp,"%ld\n",workers_mpi.offset[Y]);
+  
+  for (a=0; a < NUMPHASES; a++) {
+    for (x=0; x < workers_mpi.rows[X]; x++) {
+      for (z=0; z < workers_mpi.rows[Z]; z++) {
+        for (y=0; y < workers_mpi.rows[Y]; y++) {
+          index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+          global_index = (x + workers_mpi.offset[X])*(MESH_Y+6)            + (y + workers_mpi.offset[Y]); 
+          fprintf(fp, "%ld %le\n",global_index, gridinfo[index].phia[a]);
+        }
+      }
+    }
+    fprintf(fp,"\n");
+  }
+  if ((FUNCTION_F != 5) && (!GRAIN_GROWTH)) {
+    for (k=0; k < NUMCOMPONENTS-1; k++) {
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+            global_index = (x + workers_mpi.offset[X])*(MESH_Y+6)            + (y + workers_mpi.offset[Y]); 
+            fprintf(fp, "%ld %le\n",global_index, gridinfo[index].compi[k]);
+          }
+        }
+      }
+      fprintf(fp,"\n");
+    }
+  //   if(WRITECOMPOSITION) {
+      for (k=0; k < NUMCOMPONENTS-1; k++) {
+        for (x=0; x < workers_mpi.rows[X]; x++) {
+          for (z=0; z < workers_mpi.rows[Z]; z++) {
+            for (y=0; y < workers_mpi.rows[Y]; y++) {
+              index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+              global_index = (x + workers_mpi.offset[X])*(MESH_Y+6)            + (y + workers_mpi.offset[Y]); 
+  //             composition=0.0;
+  //             if(ISOTHERMAL) {
+  //               for (b=0; b < NUMPHASES; b++) {
+  //                 composition += c_mu(gridinfo[index].compi, T, b, k)*hphi(gridinfo[index].phia, b);
+  //               }
+  //               fprintf(fp,"%ld %le \n",global_index, composition);
+  //             } else {
+  //               for (b=0; b < NUMPHASES; b++) {
+  //                 composition += c_mu(gridinfo[index].compi, gridinfo[index].temperature, b, k)*hphi(gridinfo[index].phia, b);
+  //               }
+  //               fprintf(fp,"%ld %le \n",global_index, composition);
+  //             }
+              fprintf(fp,"%ld %le \n",global_index, gridinfo[index].composition[k]);
+            }
+          }
+        }
+        fprintf(fp,"\n");
+      }
+    }
+    if (ELASTICITY) {
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+            global_index = (x + workers_mpi.offset[X])*(MESH_Y+6)            + (y + workers_mpi.offset[Y]); 
+            fprintf(fp,"%ld %le \n",global_index, iter_gridinfo_w[index].disp[X][2]);
+          }
+        }
+      }
+      fprintf(fp,"\n");
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+            global_index = (x + workers_mpi.offset[X])*(MESH_Y+6)            + (y + workers_mpi.offset[Y]); 
+            fprintf(fp,"%ld %le \n",global_index, iter_gridinfo_w[index].disp[Y][2]);
+          }
+        }
+      }
+    }
+    if (LBM) {
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+            global_index = (x + workers_mpi.offset[X])*(MESH_Y+6)            + (y + workers_mpi.offset[Y]); 
+            fprintf(fp,"%ld %le \n",global_index, lbm_gridinfo_w[index].u[X]);
+          }
+        }
+      }
+      fprintf(fp,"\n");
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+            global_index = (x + workers_mpi.offset[X])*(MESH_Y+6)            + (y + workers_mpi.offset[Y]); 
+            fprintf(fp,"%ld %le \n",global_index, lbm_gridinfo_w[index].u[Y]);
+          }
+        }
+      }
+    }
+    
+//   }
+  if (!ISOTHERMAL) {
+    for (x=0; x < workers_mpi.rows[X]; x++) {
+      for (z=0; z < workers_mpi.rows[Z]; z++) {
+        for (y=0; y < workers_mpi.rows[Y]; y++) {
+          index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+          global_index = (x + workers_mpi.offset[X])*(MESH_Y+6)            + (y + workers_mpi.offset[Y]); 
+          fprintf(fp, "%ld %le \n",global_index, gridinfo[index].temperature);
+        }
+      }
+    }
+  }
+}
+void write_cells_vtk_2D_mpibinary(FILE *fp, struct fields* gridinfo) {
+  long x, y, z, index;
+  long a, b;
+  long k;
+  double composition;
+  long global_index;
+  double value;
+  
+
+  fwrite(&workers_mpi.rows[X],   sizeof(long), 1, fp);
+  fwrite(&workers_mpi.rows[Y],   sizeof(long), 1, fp);
+  fwrite(&workers_mpi.offset[X], sizeof(long), 1, fp);
+  fwrite(&workers_mpi.offset[Y], sizeof(long), 1, fp);
+  
+  for (a=0; a < NUMPHASES; a++) {
+    for (x=0; x < workers_mpi.rows[X]; x++) {
+      for (z=0; z < workers_mpi.rows[Z]; z++) {
+        for (y=0; y < workers_mpi.rows[Y]; y++) {
+          index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+          value = gridinfo[index].phia[a];
+          fwrite(&value, sizeof(double), 1, fp);
+        }
+      }
+    }
+  }
+  if ((FUNCTION_F != 5) && (!GRAIN_GROWTH)) {
+    for (k=0; k < NUMCOMPONENTS-1; k++) {
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+            value = gridinfo[index].compi[k];
+            fwrite(&value, sizeof(double), 1, fp);
+          }
+        }
+      }
+    }
+  //   if(WRITECOMPOSITION) {
+      for (k=0; k < NUMCOMPONENTS-1; k++) {
+        for (x=0; x < workers_mpi.rows[X]; x++) {
+          for (z=0; z < workers_mpi.rows[Z]; z++) {
+            for (y=0; y < workers_mpi.rows[Y]; y++) {
+              index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y); 
+  //             composition=0.0;
+  //             if(ISOTHERMAL) {
+  //               for (b=0; b < NUMPHASES; b++) {
+  //                 composition += c_mu(gridinfo[index].compi, T, b, k)*hphi(gridinfo[index].phia, b);
+  //               }
+  //               value = composition;
+  //               fwrite(&value, sizeof(double), 1, fp);
+  //             } else {
+  //               for (b=0; b < NUMPHASES; b++) {
+  //                 composition += c_mu(gridinfo[index].compi, gridinfo[index].temperature, b, k)*hphi(gridinfo[index].phia, b);
+  //               }
+  //               value = composition;
+  //               fwrite(&value, sizeof(double), 1, fp);
+  //             }
+              value = gridinfo[index].composition[k];
+              fwrite(&value, sizeof(double), 1, fp);
+            }
+          }
+        }
+      }
+    }
+    if (ELASTICITY) {
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y); 
+            value = iter_gridinfo_w[index].disp[X][2];
+            fwrite(&value, sizeof(double), 1, fp);
+          }
+        }
+      }
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y); 
+            value = iter_gridinfo_w[index].disp[Y][2];
+            fwrite(&value, sizeof(double), 1, fp);
+          }
+        }
+      }
+    }
+    if (LBM) {
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y); 
+            value        = lbm_gridinfo_w[index].u[X];
+            fwrite(&value, sizeof(double), 1, fp);
+          }
+        }
+      }
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y); 
+            value        = lbm_gridinfo_w[index].u[Y];
+            fwrite(&value, sizeof(double), 1, fp);
+          }
+        }
+      }
+    }
+//   }
+  if (!ISOTHERMAL) {
+    for (x=0; x < workers_mpi.rows[X]; x++) {
+      for (z=0; z < workers_mpi.rows[Z]; z++) {
+        for (y=0; y < workers_mpi.rows[Y]; y++) {
+          index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+          value        = gridinfo[index].temperature;
+          fwrite(&value, sizeof(double), 1, fp);
+        }
+      }
+    }
+  }
+}
+
+void write_cells_hdf5_2D_mpi_new(hid_t file_id, struct fields* gridinfo_w)
+{
+	hsize_t dims[DIMENSION];
+	hsize_t count[DIMENSION];
+	hsize_t offset_slab[DIMENSION];
+	int rank_hdf5 = DIMENSION;
+
+	long i, a, b, k, index, index_to;
+	long x, y;
+
+	hid_t dset_id; //handles
+	hid_t dataspace_id, memspace_id; 
+	hid_t plist_id;
+
+	long dim;
+	long size;
+
+	dims[1] = MESH_Y+6;
+	dims[0] = MESH_X+6;
+
+	count[1] = workers_mpi.rows[Y];
+	count[0] = workers_mpi.rows[X];
+
+	offset_slab[1] = workers_mpi.offset[Y];
+	offset_slab[0] = workers_mpi.offset[X];
+
+	for (x=0; x < workers_mpi.rows[X]; x++) {
+		for (y=0; y < workers_mpi.rows[Y]; y++) {
+
+			index    = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y+workers_mpi.offset_y);
+			index_to =  x*workers_mpi.rows[Y] + y;
+
+			size = 0;
+
+			for (a=0; a<NUMPHASES; a++)
+			{
+				IO_BUFFER[size++][index_to] = gridinfo_w[index].phia[a];
+			}
+
+			if ((FUNCTION_F != 5) && (!GRAIN_GROWTH))
+			{
+				for (k=0; k<(NUMCOMPONENTS-1); k++)
+				{
+					IO_BUFFER[size++][index_to] = gridinfo_w[index].compi[k];
+				}
+				for (k=0; k<(NUMCOMPONENTS-1); k++)
+				{
+					IO_BUFFER[size++][index_to] = gridinfo_w[index].composition[k];
+				}
+			}
+
+			if (ELASTICITY) {
+			for (dim=0; dim < DIMENSION; dim ++) {
+				IO_BUFFER[size++][index_to] = iter_gridinfo_w[index].disp[dim][2];
+			}
+			}
+
+			if (LBM) {
+			for (dim=0; dim < DIMENSION; dim ++) {
+				IO_BUFFER[size++][index_to] = lbm_gridinfo_w[index].u[dim];
+			}
+			}
+
+			if (!ISOTHERMAL) {
+			IO_BUFFER[size++][index_to] = gridinfo_w[index].temperature;
+			}
+
+			if (LBM && LBM_ALL_SAVE){
+				IO_BUFFER[size++][index_to] = lbm_gridinfo_w[index].rho;
+				for (k=0; k < 9; k ++) {
+					IO_BUFFER[size++][index_to] = lbm_gridinfo_w[index].fdis[k];
+				}
+			}
+		}
+	}
+
+  long NUM_FIELDS = (LBM && !LBM_ALL_SAVE) ? (IO_NUM_FIELDS - (1+9)) : IO_NUM_FIELDS;
+
+	for (i = 0; i < NUM_FIELDS; i++)
+	{
+		dataspace_id = H5Screate_simple(rank_hdf5, dims, NULL);
+		dset_id 	 = H5Dcreate(file_id, IO_FIELD_NAMES[i], H5T_NATIVE_DOUBLE, dataspace_id,H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+
+		H5Sclose(dataspace_id);
+
+		memspace_id = H5Screate_simple(rank_hdf5, count, NULL); 
+
+		dataspace_id = H5Dget_space(dset_id); 
+		H5Sselect_hyperslab(dataspace_id, H5S_SELECT_SET, offset_slab, NULL, count, NULL);
+
+		plist_id = H5Pcreate(H5P_DATASET_XFER);
+		H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE);
+
+		status_h = H5Dwrite(dset_id, H5T_NATIVE_DOUBLE, memspace_id, dataspace_id,plist_id, IO_BUFFER[i]);
+		status_h = H5Dclose(dset_id);
+		status_h = H5Sclose(dataspace_id);
+		status_h = H5Sclose(memspace_id);
+		status_h = H5Pclose(plist_id);
+	}
+
+}
+
+void write_cells_hdf5_2D_mpi(hid_t file_id, struct fields* gridinfo_w) {
+  hsize_t dims[DIMENSION];
+  hsize_t count[DIMENSION];
+  hsize_t offset_slab[DIMENSION];
+  int rank_hdf5 = DIMENSION;
+  
+  long i, a, b, k, index, index_to;
+  long x, y;
+  
+  double **buffer;
+  double composition;
+  
+  hid_t dset_id; //handles
+  hid_t dataspace_id, memspace_id; 
+  hid_t plist_id;
+
+  long dim;
+  long size;
+  
+  dims[1] = MESH_Y+6;
+  dims[0] = MESH_X+6;
+  
+  count[1] = workers_mpi.rows[Y];
+  count[0] = workers_mpi.rows[X];
+  
+  long index_count = workers_mpi.rows[X]*workers_mpi.rows[Y];
+  
+  buffer = (double **)malloc(size_fields*sizeof(double*));
+  for (i=0; i < size_fields; i++) {
+    buffer[i] = (double *)malloc(index_count*sizeof(double));
+  }
+  for (x=0; x < workers_mpi.rows[X]; x++) {
+    for (y=0; y < workers_mpi.rows[Y]; y++) {
+      index    = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y+workers_mpi.offset_y);
+      index_to =  x*workers_mpi.rows[Y] + y;
+      for (a=0; a<NUMPHASES; a++) {
+        buffer[a][index_to] = gridinfo_w[index].phia[a];
+      }
+      size = NUMPHASES;
+      if ((FUNCTION_F != 5) && (!GRAIN_GROWTH)) {
+        for (k=0; k<(NUMCOMPONENTS-1); k++) {
+          buffer[NUMPHASES+k][index_to] = gridinfo_w[index].compi[k];
+        }
+  //       if (WRITECOMPOSITION) {
+        for (k=0; k<(NUMCOMPONENTS-1); k++) {
+  //           if(ISOTHERMAL) {
+  //             for (b=0; b < NUMPHASES; b++) {
+  //               composition += c_mu(gridinfo_w[index].compi, T, b, k)*hphi(gridinfo_w[index].phia, b);
+  //             }
+  //           } else {
+  //             for (b=0; b < NUMPHASES; b++) {
+  //               composition += c_mu(gridinfo_w[index].compi, gridinfo_w[index].temperature, b, k)*hphi(gridinfo_w[index].phia, b);
+  //             }
+  //           }
+  //           buffer[NUMPHASES+(NUMCOMPONENTS-1)+k][index_to] = composition;
+          buffer[NUMPHASES+(NUMCOMPONENTS-1)+k][index_to] = gridinfo_w[index].composition[k];
+        }
+        size += 2*(NUMCOMPONENTS-1);
+      }
+      if (ELASTICITY) {
+        for (dim=0; dim < DIMENSION; dim ++) {
+          buffer[size+dim][index_to] = iter_gridinfo_w[index].disp[dim][2];
+        }
+        size += DIMENSION;
+      }
+      if (LBM) {
+        for (dim=0; dim < DIMENSION; dim ++) {
+          buffer[size + dim][index_to] = lbm_gridinfo_w[index].u[dim];
+        }
+        size += DIMENSION;
+      }
+//       }
+      if (!ISOTHERMAL) {
+        buffer[size_fields-1][index_to] = gridinfo_w[index].temperature;
+      }
+    }
+  }
+  for (i = 0; i < size_fields; i++) {
+    dataspace_id = H5Screate_simple(rank_hdf5, dims, NULL);
+    /*
+    * Create the dataset with default properties and close dataspace_id.
+    */
+    dset_id = H5Dcreate(file_id, coordNames[i], H5T_NATIVE_DOUBLE, dataspace_id,
+                    H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Sclose(dataspace_id);
+//     
+    memspace_id = H5Screate_simple(rank_hdf5, count, NULL); //count is of shape rank_hdf5
+//     
+    offset_slab[1] = workers_mpi.offset[Y];
+    offset_slab[0] = workers_mpi.offset[X];
+//     
+//     /* Select hyperslab in the file.
+//             */
+    dataspace_id = H5Dget_space(dset_id); // filespace is the handle given by dset_id
+//     // 			H5Sget_simple_extent_dims(dataspace_id, dims, NULL);
+//     // 			printf("dims[0] = %ld, dims[1] = %ld\n", (long)dims[0], (long)dims[1]);
+    H5Sselect_hyperslab(dataspace_id, H5S_SELECT_SET, offset_slab, NULL, count, NULL);
+//     
+//     /* Create property list for collective dataset write.
+//     */
+    plist_id = H5Pcreate(H5P_DATASET_XFER);
+    H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE);
+//     
+    status_h = H5Dwrite(dset_id, H5T_NATIVE_DOUBLE, memspace_id, dataspace_id,
+				plist_id, buffer[i]);
+//     
+    status_h = H5Dclose(dset_id);
+    status_h = H5Sclose(dataspace_id);
+    status_h = H5Sclose(memspace_id);
+    status_h = H5Pclose(plist_id);
+  }
+  for(i=0; i < size_fields; i++) {
+    free(buffer[i]);
+  }
+  free(buffer);
+}
+void read_cells_hdf5_2D_mpi(hid_t file_id, struct fields* gridinfo_w) {
+  hsize_t dims[DIMENSION];
+  hsize_t count[DIMENSION];
+  hsize_t offset_slab[DIMENSION];
+  int rank_hdf5 = DIMENSION;
+  
+  long i, a, b, k, index, index_to;
+  long x, y;
+  
+  double **buffer;
+  double composition;
+  
+  hid_t dset_id; //handles
+  hid_t dataspace_id, memspace_id; 
+  hid_t plist_id;
+
+  long dim;
+  long size;
+  
+  dims[1] = MESH_Y+6;
+  dims[0] = MESH_X+6;
+  
+  count[1] = workers_mpi.rows[Y];
+  count[0] = workers_mpi.rows[X];
+  
+  offset_slab[1] = workers_mpi.offset[Y];
+  offset_slab[0] = workers_mpi.offset[X];
+  
+  long index_count = workers_mpi.rows[X]*workers_mpi.rows[Y];
+  
+  buffer = (double **)malloc(size_fields*sizeof(double*));
+  for (i=0; i < size_fields; i++) {
+    buffer[i] = (double *)malloc(index_count*sizeof(double));
+  }
+  
+  for (i = 0; i < size_fields; i++) {
+    /* open the dset_id collectively */
+    dset_id = H5Dopen(file_id, coordNames[i], H5P_DEFAULT);
+    /* create a file dataspace independently */
+    dataspace_id = H5Dget_space(dset_id);
+    
+    H5Sselect_hyperslab(dataspace_id, H5S_SELECT_SET, offset_slab, NULL, count, NULL);				
+    /* create a memory dataspace independently */
+    memspace_id = H5Screate_simple(rank_hdf5, count, NULL);
+    
+//     /* Create property list for collective dataset write.
+//     */
+    plist_id = H5Pcreate(H5P_DATASET_XFER);
+    H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE);
+//     
+    status_h = H5Dread(dset_id, H5T_NATIVE_DOUBLE, memspace_id, dataspace_id,
+				plist_id, buffer[i]);
+//     status_h = H5Dread(dset_id, H5T_NATIVE_DOUBLE, memspace_id, dataspace_id,	plist_id, vec[i]);
+    status_h = H5Dclose(dset_id);
+    status_h = H5Sclose(dataspace_id);
+    status_h = H5Sclose(memspace_id);
+    status_h = H5Pclose(plist_id);
+  }
+  
+  for (x=0; x < workers_mpi.rows[X]; x++) {
+    for (y=0; y < workers_mpi.rows[Y]; y++) {
+      index_to = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y+workers_mpi.offset_y);
+      index    =  x*workers_mpi.rows[Y] + y;
+      for (a=0; a<NUMPHASES; a++) {
+         gridinfo_w[index_to].phia[a]    = buffer[a][index];
+      }
+      size = NUMPHASES;
+      if ((FUNCTION_F != 5) && (!GRAIN_GROWTH)) {
+        for (k=0; k<(NUMCOMPONENTS-1); k++) {
+          gridinfo_w[index_to].compi[k]    = buffer[NUMPHASES+k][index];
+        }
+  //       if (WRITECOMPOSITION) {
+        for (k=0; k<(NUMCOMPONENTS-1); k++) {
+          gridinfo_w[index_to].composition[k] = buffer[NUMPHASES+(NUMCOMPONENTS-1)+k][index];
+        }
+        size += 2*(NUMCOMPONENTS-1);
+      }
+//       }
+      if (ELASTICITY) {
+        for (dim=0; dim < DIMENSION; dim++) {
+          iter_gridinfo_w[index_to].disp[dim][2] = buffer[size+dim][index]; 
+        }
+        size += DIMENSION;
+      }
+      if (LBM) {
+        for (dim=0; dim < DIMENSION; dim++) {
+          lbm_gridinfo_w[index_to].u[dim] = buffer[size + dim][index]; 
+        }
+        size += DIMENSION;
+      }
+      if (!ISOTHERMAL) {
+        gridinfo_w[index_to].temperature = buffer[size_fields-1][index];
+      }
+    }
+  }
+  
+  for(i=0; i < size_fields; i++) {
+    free(buffer[i]);
+  }
+  free(buffer);
+}
+void read_cells_vtk_2D_mpi(FILE *fp, struct fields* gridinfo_w) {
+  long x, y, z, index;
+  long a, b;
+  long k;
+  double composition;
+  long global_index;
+  long dim;
+  
+  fscanf(fp,"%ld\n",&workers_mpi.rows[X]);
+  fscanf(fp,"%ld\n",&workers_mpi.rows[Y]);
+  fscanf(fp,"%ld\n",&workers_mpi.offset[X]);
+  fscanf(fp,"%ld\n",&workers_mpi.offset[Y]);
+  
+  for (a=0; a < NUMPHASES; a++) {
+    for (x=0; x < workers_mpi.rows[X]; x++) {
+      for (z=0; z < workers_mpi.rows[Z]; z++) {
+        for (y=0; y < workers_mpi.rows[Y]; y++) {
+          index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+          fscanf(fp, "%ld %le\n",&global_index, &gridinfo_w[index].phia[a]);
+        }
+      }
+    }
+//     fprintf(fp,"\n");
+  }
+  for (k=0; k < NUMCOMPONENTS-1; k++) {
+    for (x=0; x < workers_mpi.rows[X]; x++) {
+      for (z=0; z < workers_mpi.rows[Z]; z++) {
+        for (y=0; y < workers_mpi.rows[Y]; y++) {
+          index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+          fscanf(fp, "%ld %le\n",&global_index, &gridinfo_w[index].compi[k]);
+        }
+      }
+    }
+//     fprintf(fp,"\n");
+  }
+//   if(WRITECOMPOSITION) {
+    for (k=0; k < NUMCOMPONENTS-1; k++) {
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y); 
+            fscanf(fp,"%ld %le \n",&global_index, &gridinfo_w[index].composition[k]);
+          }
+        }
+      }
+//       fprintf(fp,"\n");
+    }
+    if (ELASTICITY) {
+      for (dim=0; dim < DIMENSION; dim++) {
+        for (x=0; x < workers_mpi.rows[X]; x++) {
+          for (z=0; z < workers_mpi.rows[Z]; z++) {
+            for (y=0; y < workers_mpi.rows[Y]; y++) {
+              index = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y); 
+              fscanf(fp,"%ld %le \n",&global_index, &iter_gridinfo_w[index].disp[dim][2]);
+            }
+          }
+        }
+  //       fprintf(fp,"\n");
+      }
+    }
+    if (LBM) {
+      for (dim=0; dim < DIMENSION; dim++) {
+        for (x=0; x < workers_mpi.rows[X]; x++) {
+          for (z=0; z < workers_mpi.rows[Z]; z++) {
+            for (y=0; y < workers_mpi.rows[Y]; y++) {
+              index = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y); 
+              fscanf(fp,"%ld %le \n",&global_index, &lbm_gridinfo_w[index].u[dim]);
+            }
+          }
+        }
+  //       fprintf(fp,"\n");
+      }
+    }
+    
+    
+//   }
+  if (!ISOTHERMAL) {
+    for (x=0; x < workers_mpi.rows[X]; x++) {
+      for (z=0; z < workers_mpi.rows[Z]; z++) {
+        for (y=0; y < workers_mpi.rows[Y]; y++) {
+          index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+          fscanf(fp, "%ld %le \n",&global_index, &gridinfo_w[index].temperature);
+        }
+      }
+    }
+  }
+}
+void read_cells_vtk_2D_mpibinary(FILE *fp, struct fields* gridinfo_w) {
+  long x, y, z, index;
+  long a, b;
+  long k;
+  double composition;
+  long global_index;
+  double value;
+  long dim;
+
+  fread(&workers_mpi.rows[X],   sizeof(long), 1, fp);
+  fread(&workers_mpi.rows[Y],   sizeof(long), 1, fp);
+  fread(&workers_mpi.offset[X], sizeof(long), 1, fp);
+  fread(&workers_mpi.offset[Y], sizeof(long), 1, fp);
+  
+  for (a=0; a < NUMPHASES; a++) {
+    for (x=0; x < workers_mpi.rows[X]; x++) {
+      for (z=0; z < workers_mpi.rows[Z]; z++) {
+        for (y=0; y < workers_mpi.rows[Y]; y++) {
+          index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+          fread(&value, sizeof(double), 1, fp);
+          gridinfo_w[index].phia[a] = value;
+        }
+      }
+    }
+  }
+  for (k=0; k < NUMCOMPONENTS-1; k++) {
+    for (x=0; x < workers_mpi.rows[X]; x++) {
+      for (z=0; z < workers_mpi.rows[Z]; z++) {
+        for (y=0; y < workers_mpi.rows[Y]; y++) {
+          index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+          fread(&value, sizeof(double), 1, fp);
+          gridinfo_w[index].compi[k] = value;
+        }
+      }
+    }
+  }
+//   if(WRITECOMPOSITION) {
+    for (k=0; k < NUMCOMPONENTS-1; k++) {
+      for (x=0; x < workers_mpi.rows[X]; x++) {
+        for (z=0; z < workers_mpi.rows[Z]; z++) {
+          for (y=0; y < workers_mpi.rows[Y]; y++) {
+            index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+            fread(&value, sizeof(double), 1, fp);
+            gridinfo_w[index].composition[k] = value;
+          }
+        }
+      }
+    }
+    if (ELASTICITY) {
+      for (dim=0; dim < DIMENSION; dim++) {
+        for (x=0; x < workers_mpi.rows[X]; x++) {
+          for (z=0; z < workers_mpi.rows[Z]; z++) {
+            for (y=0; y < workers_mpi.rows[Y]; y++) {
+              index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+              fread(&value, sizeof(double), 1, fp);
+              iter_gridinfo_w[index].disp[dim][2] = value;
+            }
+          }
+        }
+      }
+    }
+    if (LBM) {
+      for (dim=0; dim < DIMENSION; dim++) {
+        for (x=0; x < workers_mpi.rows[X]; x++) {
+          for (z=0; z < workers_mpi.rows[Z]; z++) {
+            for (y=0; y < workers_mpi.rows[Y]; y++) {
+              index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+              fread(&value, sizeof(double), 1, fp);
+              lbm_gridinfo_w[index].u[dim] = value;
+            }
+          }
+        }
+      }
+    }
+    
+//   }
+  if (!ISOTHERMAL) {
+    for (x=0; x < workers_mpi.rows[X]; x++) {
+      for (z=0; z < workers_mpi.rows[Z]; z++) {
+        for (y=0; y < workers_mpi.rows[Y]; y++) {
+          index        = (x + workers_mpi.offset_x)*workers_mpi.layer_size + (y + workers_mpi.offset_y);
+          fread(&value, sizeof(double), 1, fp);
+          gridinfo_w[index].temperature = value;
+        }
+      }
+    }
+  }
+}
+
+
+void populate_table_names(){
+  long i, a, b, k;
+  char chempot_name[100];
+  char composition_name[100]; 
+  char phase_name[100];
+  
+  size_fields = NUMPHASES;
+  
+//   if (WRITECOMPOSITION) {
+  if ((FUNCTION_F != 5) && (!GRAIN_GROWTH)) {
+    size_fields += 2*(NUMCOMPONENTS-1);
+  }
+//   }
+  if (ELASTICITY) {
+    if (DIMENSION ==2) {
+      size_fields += 2;
+    } else {
+      size_fields += 3;
+    }
+  }
+  if (LBM) {
+//     size_fields += SIZE_LBM_FIELDS;
+     if (DIMENSION ==2) {
+      size_fields += 2;
+    } else {
+      size_fields += 3;
+    }
+  }
+  if(!ISOTHERMAL) {
+    size_fields += 1;
+  }
+  
+  coordNames   = (char**)malloc(sizeof(char*)*(size_fields + 1 + 27));
+  i=0;
+  for (a = 0; a < NUMPHASES; a++) {
+    sprintf(phase_name, "/%s",Phases[a]);
+    coordNames[i] = (char*)malloc(sizeof(char)*strlen(phase_name));
+    strcpy(coordNames[i], phase_name);
+    i++;
+  }
+  if ((FUNCTION_F != 5) && (!GRAIN_GROWTH)) {
+    for (k=0; k < NUMCOMPONENTS-1; k++) {
+      sprintf(chempot_name, "/Mu_%s",Components[k]);
+      coordNames[i] = (char*)malloc(sizeof(char)*strlen(chempot_name));
+      strcpy(coordNames[i], chempot_name);
+      i++;
+    }
+  //   if (WRITECOMPOSITION) {
+    for (k=0; k < NUMCOMPONENTS-1; k++) {
+      sprintf(composition_name, "/Composition_%s",Components[k]);
+      coordNames[i] = (char*)malloc(sizeof(char)*strlen(composition_name));
+      strcpy(coordNames[i], composition_name);
+      i++;
+    }
+  }
+  if (ELASTICITY) {
+    coordNames[i] = (char*)malloc(sizeof(char)*(strlen("/Ux")+1));
+    strcpy(coordNames[i], "/Ux");
+    i++;
+    coordNames[i] = (char*)malloc(sizeof(char)*(strlen("/Uy")+1));
+    strcpy(coordNames[i], "/Uy");
+    i++;
+    if (DIMENSION !=2) {
+      coordNames[i] = (char*)malloc(sizeof(char)*(strlen("/Uz")+1));
+      strcpy(coordNames[i], "/Uz");
+      i++;
+    }
+  }
+  if (LBM) {
+    coordNames[i] = (char*)malloc(sizeof(char)*(strlen("/LBM_Ux")+1));
+    strcpy(coordNames[i], "/LBM_Ux");
+    i++;
+    coordNames[i] = (char*)malloc(sizeof(char)*(strlen("/LBM_Uy")+1));
+    strcpy(coordNames[i], "/LBM_Uy");
+    i++;
+    if (DIMENSION == 3) {
+      coordNames[i] = (char*)malloc(sizeof(char)*(strlen("/LBM_Uz")+1));
+      strcpy(coordNames[i], "/LBM_Uz");
+      i++;
+    }
+  }
+//   }
+  if (!ISOTHERMAL) {
+    coordNames[i] = (char*)malloc(sizeof(char)*(strlen("/T")+1));
+    strcpy(coordNames[i], "/T");
+    i++ ;
+  }
+
+  // now for the f vectors and density
+
+  if(LBM && DIMENSION == 3){
+    coordNames[i] = (char*)malloc(sizeof(char)*(strlen("/LBM_rho")+1));
+    strcpy(coordNames[i], "/LBM_rho");
+    i++ ;
+    for(unsigned int k = 0 ; k < 27; k ++){
+      char var_name[10];
+      strcpy(var_name,"");
+      strcat(var_name,"/LBM_f") ;
+      char index[10];
+      sprintf(index, "_%d", k) ;
+      strcat(var_name, index) ;
+      coordNames[i] = (char*)malloc(sizeof(char)*(strlen(var_name)+1));
+      strcpy(coordNames[i], var_name);
+      i++ ;
+    }
+    if(taskid == MASTER){
+      for(unsigned int a = 0 ; a < size_fields + 1 + 27; a ++){
+        printf("\n- [%d] coordNames[%d] = `%s`",taskid, a, coordNames[a]) ;
+      }
+    }
+
+  }
+
+
+
+
+
+
+}
+#endif

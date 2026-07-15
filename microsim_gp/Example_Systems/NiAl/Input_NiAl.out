@@ -1,0 +1,192 @@
+MESH_X = 100
+
+MESH_Y = 100
+
+MESH_Z = 1
+
+DELTA_X = 1.000000e-07
+
+DELTA_Y = 1.000000e-07
+
+DELTA_Z = 1.000000e+00
+
+NUMPHASES = 2
+
+NUMCOMPONENTS = 2
+
+DIMENSION = 2
+
+NTIMESTEPS = 0
+
+SAVET = 1000
+
+NSMOOTH = 10
+
+R = 8.314000e+00
+
+V = 1.000000e-05
+
+TEMPERATURE = 1.717000e+03
+
+Equilibrium_temperature = 1.718000e+03
+
+Filling_temperature = 1.717000e+03
+
+GAMMA = [0.000000e+00,1.000000e-01
+         1.000000e-01,0.000000e+00]
+
+dab = [0.000000e+00,1.000000e-02
+       1.000000e-02,0.000000e+00]
+
+Tau = [0.000000e+00,2.800000e-01
+       2.800000e-01,0.000000e+00]
+
+DIFFUSIVITY[alpha] = [0.000000e+00]
+
+DIFFUSIVITY[liquid] = [1.000000e-09]
+
+Slopes[Solidus,alpha] = [0.000000e+00]
+
+Slopes[Solidus,liquid] = [0.000000e+00]
+
+Slopes[Liquidus,alpha] = [0.000000e+00]
+
+Slopes[Liquidus,liquid] = [0.000000e+00]
+
+A[alpha] = [1.575030e+05]
+
+A[liquid] = [1.375835e+05]
+
+DELTA_T = [0.000000e+00,0.000000e+00
+           0.000000e+00,0.000000e+00]
+
+DELTA_C = [0.000000e+00
+           0.000000e+00]
+
+dcbdT[0] = [0.000000e+00
+            0.000000e+00]
+
+dcbdT[1] = [0.000000e+00
+            0.000000e+00]
+
+dBbdT = [0.000000e+00
+         0.000000e+00]
+
+Beq = [0.000000e+00
+       0.000000e+00]
+
+B = [-1.454086e+03
+     0.000000e+00]
+
+C = [-6.125237e+01,0.000000e+00]
+
+Rotation_matrix[alpha][liquid] = [7.071068e-01,-7.071068e-01,0.000000e+00
+                                  7.071068e-01,7.071068e-01,0.000000e+00
+                                  0.000000e+00,0.000000e+00,1.000000e+00]
+
+Rotation_matrix[liquid][alpha] = [7.071068e-01,-7.071068e-01,0.000000e+00
+                                  7.071068e-01,7.071068e-01,0.000000e+00
+                                  0.000000e+00,0.000000e+00,1.000000e+00]
+
+Inv_Rotation_matrix[alpha][liquid] = [7.071068e-01,7.071068e-01,0.000000e+00
+                                      -7.071068e-01,7.071068e-01,0.000000e+00
+                                      0.000000e+00,0.000000e+00,1.000000e+00]
+
+Inv_Rotation_matrix[liquid][alpha] = [7.071068e-01,7.071068e-01,0.000000e+00
+                                      -7.071068e-01,7.071068e-01,0.000000e+00
+                                      0.000000e+00,0.000000e+00,1.000000e+00]
+
+Function_F = 4
+
+Function_W = 1
+
+Function_anisotropy = 1
+
+Anisotropy_type = 4
+
+COMPONENTS = [Al,Ni]
+
+PHASES = [alpha,liquid]
+
+ceq[Solidus,alpha] = [9.447580e-02]
+
+ceq[Solidus,liquid] = [1.028660e-01]
+
+ceq[Liquidus,alpha] = [1.028660e-01]
+
+ceq[Liquidus,liquid] = [1.028660e-01]
+
+cfill[Liquidus,alpha] = [1.028660e-01]
+
+cfill[Liquidus,liquid] = [1.028660e-01]
+
+BOUNDARY_LEFT[PHI] = NEUMANN
+
+BOUNDARY_RIGHT[PHI] = NEUMANN
+
+BOUNDARY_FRONT[PHI] = NEUMANN
+
+BOUNDARY_BACK[PHI] = NEUMANN
+
+BOUNDARY_TOP[PHI] = FREE
+
+DIRICHLET and FREE boundary conditions have not yet been implemented. Please wait for next release. Will default to PERIODIC
+BOUNDARY_BOTTOM[PHI] = FREE
+
+DIRICHLET and FREE boundary conditions have not yet been implemented. Please wait for next release. Will default to PERIODIC
+BOUNDARY_LEFT[MU] = NEUMANN
+
+BOUNDARY_RIGHT[MU] = NEUMANN
+
+BOUNDARY_FRONT[MU] = NEUMANN
+
+BOUNDARY_BACK[MU] = NEUMANN
+
+BOUNDARY_TOP[MU] = FREE
+
+DIRICHLET and FREE boundary conditions have not yet been implemented. Please wait for next release. Will default to PERIODIC
+BOUNDARY_BOTTOM[MU] = FREE
+
+DIRICHLET and FREE boundary conditions have not yet been implemented. Please wait for next release. Will default to PERIODIC
+BOUNDARY_LEFT[T] = NEUMANN
+
+BOUNDARY_RIGHT[T] = NEUMANN
+
+BOUNDARY_FRONT[T] = NEUMANN
+
+BOUNDARY_BACK[T] = NEUMANN
+
+BOUNDARY_TOP[T] = FREE
+
+DIRICHLET and FREE boundary conditions have not yet been implemented. Please wait for next release. Will default to PERIODIC
+BOUNDARY_BOTTOM[T] = FREE
+
+DIRICHLET and FREE boundary conditions have not yet been implemented. Please wait for next release. Will default to PERIODIC
+BOUNDARY_LEFT[U] = PERIODIC
+
+BOUNDARY_RIGHT[U] = PERIODIC
+
+BOUNDARY_FRONT[U] = PERIODIC
+
+BOUNDARY_BACK[U] = PERIODIC
+
+BOUNDARY_TOP[U] = FREE
+
+DIRICHLET and FREE boundary conditions have not yet been implemented. Please wait for next release. Will default to PERIODIC
+BOUNDARY_BOTTOM[U] = FREE
+
+DIRICHLET and FREE boundary conditions have not yet been implemented. Please wait for next release. Will default to PERIODIC
+BOUNDARY_LEFT[F] = PERIODIC
+
+BOUNDARY_RIGHT[F] = PERIODIC
+
+BOUNDARY_FRONT[F] = PERIODIC
+
+BOUNDARY_BACK[F] = PERIODIC
+
+BOUNDARY_TOP[F] = FREE
+
+DIRICHLET and FREE boundary conditions have not yet been implemented. Please wait for next release. Will default to PERIODIC
+BOUNDARY_BOTTOM[F] = FREE
+
+DIRICHLET and FREE boundary conditions have not yet been implemented. Please wait for next release. Will default to PERIODIC

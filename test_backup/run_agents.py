@@ -1,0 +1,93 @@
+import autogen
+
+# =====================================================================
+# 1. UNIVERSAL WORKSPACE DATA REGISTRY
+# =====================================================================
+WORKSPACE_REGISTRY = {
+    "alzn": {
+        "system_name": "Al-Zn (Aluminum-Zinc) Dendrite Simulation Workspace",
+        "files_available": ["Input.in", "Input_aniso.in", "Input_aniso.out"],
+        "mesh_dimensions": "200x100x250 (Non-isothermal) | 100x100x1 (Isothermal)",
+        "discretization": "DELTA_X = 1e-8 to 2e-8 m, DELTA_t = 18e-9 s",
+        "kinetics": "Baseline T = 857 K, Equilibrium T = 870 K. Undercooling = 13 K",
+        "phase_boundaries": "ceq[alpha, solidus] = 0.926, ceq[liquid, liquidus] = 0.817",
+        "thermodynamics": "Slopes[Solidus, alpha] = 772.34, Slopes[Liquidus, alpha] = 299.26, Diffusivity[liquid] = 1e-9",
+    },
+    "nial": {
+        "system_name": "Ni-Al (Nickel-Aluminum) Isothermal Workspace",
+        "files_available": ["Input_NiAl.in", "Filling_NiAl.in", "Composition_FCC_A1.csv", "HSN_FCC_A1.csv", "HSN_LIQUID.csv"],
+        "mesh_dimensions": "100x100x1, DELTA_X = 1e-7 m (100 nm)",
+        "discretization": "DELTA_t = 1e-7 s, NTIMESTEPS = 20000",
+        "kinetics": "Isothermal T = 1717 K, Equilibrium T = 1718 K. Undercooling = 1 K",
+        "geometry": "FILLCYLINDER seed at origin, 45-degree rotation matrix anisotropy (Anisotropy_type = 4)",
+        "thermodynamics": {
+            "1717.0": "Al@fcc = 0.0985458, Al@liq = 0.107529, HSN_fcc = 315006, HSN_liq = 275167",
+            "1717.1": "Al@fcc = 0.0981515, Al@liq = 0.107076, HSN_fcc = 314957, HSN_liq = 275160",
+            "1717.5": "Al@fcc = 0.0965467, Al@liq = 0.105237, HSN_fcc = 314800, HSN_liq = 275175",
+            "1718.0": "Al@fcc = 0.0944758, Al@liq = 0.102866, HSN_fcc = 314701, HSN_liq = 275301"
+        }
+    },
+    "ninb": {
+        "system_name": "Ni-Nb (Nickel-Niobium) High-Fidelity Simulation Workspace",
+        "files_available": ["Input_tdb_new_NiNb.in", "HSN_LIQUID.csv"],
+        "mesh_dimensions": "200x200x1, DELTA_X = 3e-8 m",
+        "discretization": "DELTA_t = 162e-9 s, NTIMESTEPS = 2000000",
+        "thermodynamics": {
+            "1593": "HSN_liq = 549773", "1594": "HSN_liq = 550782", "1595": "HSN_liq = 551803",
+            "1596": "HSN_liq = 552835", "1597": "HSN_liq = 553880", "1598": "HSN_liq = 554938",
+            "1599": "HSN_liq = 556009", "1600": "HSN_liq = 557092", "1601": "HSN_liq = 558189",
+            "1602": "HSN_liq = 559300", "1603": "HSN_liq = 560425", "1604": "HSN_liq = 561565",
+            "1605": "HSN_liq = 562719", "1610": "HSN_liq = 568720", "1615": "HSN_liq = 575143",
+            "1620": "HSN_liq = 582040", "1622": "HSN_liq = 584945"
+        }
+    }
+}
+
+# =====================================================================
+# 2. AGENT PIPELINE SETUP
+# =====================================================================
+config_list = [{'model': 'gemma2:2b', 'base_url': 'http://host.docker.internal:11434/v1', 'api_key': 'ollama'}]
+
+llm_config = {'config_list': config_list, 'temperature': 0.0, 'timeout': 600}
+
+user_proxy = autogen.UserProxyAgent(
+    name='user_proxy',
+    human_input_mode='NEVER',
+    max_consecutive_auto_reply=1,
+    code_execution_config=False
+)
+
+orchestrator = autogen.AssistantAgent(
+    name='orchestrator',
+    llm_config=llm_config,
+    system_message="""You are a computational processing engine. 
+    1. EXTRACT: Directly retrieve requested values from the provided SYSTEM DATA MATRIX REGISTRY.
+    2. COMPUTE: Perform the requested arithmetic immediately.
+    3. REPORT: State the two values used, show the subtraction, and provide the result.
+    4. PROHIBITION: Never ask the user to perform lookups. Never ask for external files."""
+)
+
+# =====================================================================
+# 3. EXECUTION LOOP
+# =====================================================================
+print('='*70)
+print('[System] Universal Multi-Material Phase-Field Solver Pipeline Online.')
+print('='*70)
+
+user_input = input("\nTask / Question Statement: ")
+
+if user_input.strip():
+    universal_runtime_prompt = f"""
+    SYSTEM DATA MATRIX REGISTRY:
+    {WORKSPACE_REGISTRY}
+    
+    USER REQUEST:
+    {user_input}
+    
+    INSTRUCTIONS: Answer the request using ONLY the data above. Do not ask for files or user help.
+    """
+    
+    print('\n[System] Parsing registry matrices...\n')
+    user_proxy.initiate_chat(orchestrator, message=universal_runtime_prompt)
+else:
+    print("[System] Initialization aborted. Input parameter space empty.")

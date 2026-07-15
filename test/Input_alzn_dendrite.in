@@ -1,0 +1,22 @@
+[SYSTEM]
+system_name = 'Al-Zn (Aluminum-Zinc) Dendrite Simulation Workspace'
+
+[MESH]
+dimensions = [200, 100, 250]
+delta_x = 2e-08
+delta_y = 2e-08
+delta_z = 2e-08
+
+[DISCRETIZATION]
+delta_t = 2e-08
+ntimesteps = 100000
+savet = 10000
+
+[KINETICS]
+filling_temperature = 857
+equilibrium_temperature = 870
+under_cooling = 15
+
+[GEOMETRY]
+layout = {0,0,0,0,0,5} seed at origin
+

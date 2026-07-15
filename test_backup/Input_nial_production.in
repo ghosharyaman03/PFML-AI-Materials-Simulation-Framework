@@ -1,0 +1,23 @@
+[SYSTEM]
+system_name = 'Ni-Nb (Nickel-Niobium) High-Fidelity Simulation Workspace'
+
+[MESH]
+dimensions = [200, 200, 1]
+delta_x = 3e-08
+delta_y = 3e-08
+delta_z = 3e-08
+
+[DISCRETIZATION]
+delta_t = 1.62e-07
+ntimesteps = 2000000
+savet = 10000
+
+[KINETICS]
+filling_temperature = 1717
+equilibrium_temperature = 1718
+under_cooling = 1
+
+[GEOMETRY]
+layout = 'FILLCYLINDER = {0,0,0,0,0,5} seed at origin'
+
+

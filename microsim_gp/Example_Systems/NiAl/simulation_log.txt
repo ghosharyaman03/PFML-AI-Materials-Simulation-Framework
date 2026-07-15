@@ -1,0 +1,108 @@
+DIMENSION = 2
+MESH_X = 100
+MESH_Y = 100
+MESH_Z = 1
+DELTA_X = 1e-7
+DELTA_Y = 1e-7
+DELTA_Z = 1e-7
+DELTA_t = 1e-7
+NUMPHASES = 2
+NUMCOMPONENTS = 2
+NSMOOTH = 10
+SAVET = 1000
+RESTART = 0
+STARTTIME = 0
+numworkers = 4
+COMPONENTS = {Al, Ni};
+PHASES = {alpha, liquid};
+GAMMA = {0.1};
+R = 8.314
+V = 10e-6
+DIFFUSIVITY = {1, 1, 1};
+DIFFUSIVITY = {1, 1, 1e-9};
+EIGEN_STRAIN = {0, 0.01, 0.01, 0.0, 0.0, 0.0, 0.0};
+EIGEN_STRAIN = {1, 0.01, 0.01, 0.0, 0.0, 0.0, 0.0};
+VOIGT_ISOTROPIC = {0, 270, 187.5, 125.0};
+VOIGT_ISOTROPIC = {1, 270, 187.5, 125.0};
+BOUNDARY = {phi, 1, 1, 1, 1, 1, 1};
+BOUNDARY = {mu, 1, 1, 1, 1, 1, 1};
+BOUNDARY = {c, 1, 1, 1, 1, 1, 1};
+BOUNDARY = {T, 1, 1, 1, 1, 1, 1};
+BOUNDARY_VALUE = {phi, 0, 0, 0, 0, 1, 1};
+BOUNDARY_VALUE = {mu, 0, 0, 0, 0, 1, 1};
+BOUNDARY_VALUE = {c, 0, 0, 0, 0, 1, 1};
+BOUNDARY_VALUE = {T, 0, 0, 0, 0, 1, 1};
+ISOTHERMAL = 1
+BINARY = 1
+TERNARY = 0
+DILUTE = 0
+T = 1717
+WRITEFORMAT = ASCII
+WRITEHDF5 = 1
+TRACK_PROGRESS = 10
+epsilon = 4e-7
+tau = 1.31
+Tau = {0.28};
+Function_anisotropy = 1
+Anisotropy_type = 4
+dab = {0.01};
+Function_W = 1
+Gamma_abc = {æìà–äZ};
+Shift = 0
+Shiftj = 30
+Writecomposition = 1
+Noise_phasefield = 1
+Amp_Noise_Phase = 0.1
+Equilibrium_temperature = 1718
+Filling_temperature = 1717
+Tempgrady = {856.95, 0.1, 10e-6, 0, 320e-6};
+Function_F = 4
+num_thermo_phases = 2
+tdbfname = alzn_mey.tdb
+tdb_phases = {FCC_A1, LIQUID};
+phase_map = {FCC_A1, LIQUID};
+ceq = {0, 0, 0.0944758};
+ceq = {0, 1, 0.102866};
+ceq = {1, 0, 0.102866};
+ceq = {1, 1, 0.102866};
+cfill = {0, 0, 0.0944758};
+cfill = {0, 1, 0.102866};
+cfill = {1, 0, 0.102866};
+cfill = {1, 1, 0.102866};
+Rotation_matrix = {0, 1, 0, 0, 45};
+numworkers = 2 2 1
+FCC_A1
+FCC_A1
+FCC_A1
+FCC_A1
+LIQUID
+LIQUID
+LIQUID
+LIQUID
+
+- [0] slopes[alpha][liquid][Al]=0.000000e+00
+- [0] slopes[alpha][alpha][Al]=0.000000e+00Filling cylinder
+End filling cylinder
+Filling composition
+
+- [0] workers_mpi : rows[53,53,1] rows_(56,56,1) start[3,3,0] end[52,52,0] first(1,1,0) last(0,0,0) offset[0,0,0] offset_(0,0,0)
+	left=2 right=2 top=1 bottom=2 front=0 back=0
+
+
+- [1] workers_mpi : rows[53,53,1] rows_(56,56,1) start[3,3,0] end[52,52,0] first(1,0,0) last(0,1,0) offset[0,53,0] offset_(0,3,0)
+	left=3 right=3 top=0 bottom=3 front=1 back=1
+
+- [2] workers_mpi : rows[53,53,1] rows_(56,56,1) start[3,3,0] end[52,52,0] first(0,1,0) last(1,0,0) offset[53,0,0] offset_(3,0,0)
+	left=0 right=0 top=3 bottom=0 front=2 back=2
+
+- [3] workers_mpi : rows[53,53,1] rows_(56,56,1) start[3,3,0] end[52,52,0] first(0,0,0) last(1,1,0) offset[53,53,0] offset_(3,3,0)
+	left=1 right=1 top=2 bottom=1 front=3 back=3
+
+- [3] tau_ab[0][1]=1.721651e+08, tau=1.721651e+08, dcdmu[0][0]=3.634157e-06
+- [1] sending rows[53,53,1]
+>> writing xmf file DATA/./DATA/test_out_0.xmf
+- [0] Smooth start
+- [0] Smooth complete
+- [0] Solverloop start
+- [0] Solverloop complete
+

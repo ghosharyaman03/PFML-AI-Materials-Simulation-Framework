@@ -1,0 +1,578 @@
+#ifndef FILL_DOMAIN_H_
+#define FILL_DOMAIN_H_
+
+/*
+ * ============================================================================
+ * Function: fill_domain
+ * ============================================================================
+ *
+ * Description:
+ * ------------
+ * This function reads a user-provided input file (argv[2]) and initializes
+ * the simulation domain by filling geometric regions with specified phases,
+ * compositions, or velocity fields.
+ *
+ * The input file is expected to contain commands of the form:
+ *
+ *     KEYWORD = {comma-separated parameters};
+ *
+ * Each keyword corresponds to a specific geometric operation or initialization
+ * routine. Based on the keyword, the function parses parameters and invokes
+ * the appropriate filling routine.
+ *
+ * Supported Operations:
+ * ---------------------
+ * - FILLCUBE                  : Fill a rectangular cuboid region
+ * - FILLCYLINDER              : Fill a cylindrical region
+ * - FILLCYLINDERNEXLP         : Cylinder without excluding last phase
+ * - FILLSPHERE                : Fill a spherical region
+ * - FILLSPHERENEXLP           : Sphere without excluding last phase
+ * - FILLELLIPSE               : Fill an ellipsoidal region
+ * - FILLCYLINDERRANDOM        : Random distribution of cylinders
+ * - FILLCYLINDERRANDOMNEXLP   : Random cylinders (no last phase exclusion)
+ * - FILLSPHERERANDOM          : Random distribution of spheres
+ * - FILLSPHERERANDOMNEXLP     : Random spheres (no last phase exclusion)
+ * - FILLCUBEPATTERN           : Structured cube pattern generation
+ * - FILLCUBERANDOM            : Random cube distribution
+ * - FILLVORONOI2D             : 2D Voronoi tessellation
+ * - FILLVORONOI3D             : 3D Voronoi tessellation
+ * - FILLCUBEVELOCITY          : Assign velocity field in a cuboid (LBM only)
+ *
+ * Behavior:
+ * ---------
+ * 1. Opens and reads the input file line by line.
+ * 2. Ignores commented lines (starting with '#').
+ * 3. Parses each valid command into tokens.
+ * 4. Converts parameters into numeric values.
+ * 5. Adjusts coordinates using domain offsets (start[X], start[Y], start[Z]).
+ * 6. Calls corresponding fill_* routines to populate the domain.
+ * 7. Dynamically allocates and frees temporary buffers for parsing.
+ *
+ * Additional Notes:
+ * -----------------
+ * - Many operations require:
+ *      NUMPHASES > 0 and (NUMCOMPONENTS - 1) > 0
+ * - Some routines optionally exclude the last phase (NUMPHASES - 1).
+ * - Randomized fills include constraints like shielding distance and
+ *   volume fraction.
+ * - Velocity filling is only enabled when LBM (Lattice Boltzmann Method)
+ *   is active.
+ *
+ * Post-processing:
+ * ----------------
+ * After all geometric fills:
+ * - If FUNCTION_F != 5 and GRAIN_GROWTH is disabled,
+ *   the function initializes composition using fill_composition_cube().
+ *
+ * Error Handling:
+ * ---------------
+ * - Prints an error message if the input file cannot be opened.
+ * - Assumes well-formed input; minimal validation is performed.
+ *
+ * Memory Management:
+ * ------------------
+ * - Temporary arrays are dynamically allocated for token parsing and
+ *   freed after each command is processed.
+ *
+ * Dependencies:
+ * -------------
+ * - Global structures:
+ *      fill_cube_parameters, fill_cylinder_parameters,
+ *      fill_sphere_parameters, fill_ellipse_parameters
+ * - Global variables:
+ *      NUMPHASES, NUMCOMPONENTS, FUNCTION_F, GRAIN_GROWTH,
+ *      start[], gridinfo, lbm_gridinfo
+ * - External functions:
+ *      fill_phase_*(), fill_velocity_cube(), fill_composition_cube(), etc.
+ *
+ * ============================================================================
+ */
+
+void fill_domain(char *argv[]) {
+  FILE *fr;
+  int i;
+  char tempbuff[1000];
+
+  char tmpstr1[100];
+  char tmpstr2[100];
+  char **tmp;
+
+  bool decision;
+
+  char *str1, *str2, *token, *subtoken;
+  char *saveptr1, *saveptr2;
+
+  long k, j;
+  long index;
+  long length;
+  long phase;
+
+  fr = fopen(argv[2], "rt");
+
+  if(fr == NULL) {
+    printf("file %s not found", argv[2]);
+  }
+  while(fgets(tempbuff,1000,fr)) {
+    sscanf(tempbuff, "%100s = %100[^;];", tmpstr1, tmpstr2);
+//     printf("%s\n",  tmpstr1);
+//     printf("%s\n",  tmpstr2);
+    if(tmpstr1[0] != '#') {
+      if ((strcmp(tmpstr1, "FILLCUBE") == 0) && (NUMPHASES > 0) && ((NUMCOMPONENTS-1) >0)) {
+        tmp = (char**)malloc(sizeof(char*)*7);
+        for (i = 0; i < 7; ++i) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+        phase = atol(tmp[0]);
+
+        fill_cube_parameters.x_start = atol(tmp[1]) + start[X];
+        fill_cube_parameters.x_end   = atol(tmp[4]) + start[X];
+        fill_cube_parameters.y_start = atol(tmp[2]) + start[Y];
+        fill_cube_parameters.y_end   = atol(tmp[5]) + start[Y];
+        fill_cube_parameters.z_start = atol(tmp[3]) + start[Z];
+        fill_cube_parameters.z_end   = atol(tmp[6]) + start[Z];
+
+        fill_phase_cube(fill_cube_parameters, gridinfo, phase);
+       fill_phase_cube(fill_cube_parameters, gridinfo, NUMPHASES-1);
+
+        for (i = 0; i < 7; ++i) {
+          free(tmp[i]);
+        }
+        free(tmp);
+      }
+      else if ((strcmp(tmpstr1, "FILLCYLINDER") == 0) && (NUMPHASES > 0) && ((NUMCOMPONENTS-1) >0)) {
+        printf("Filling cylinder\n");
+        tmp = (char**)malloc(sizeof(char*)*6);
+        for (i = 0; i < 6; ++i) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+        phase = atol(tmp[0]);
+
+        fill_cylinder_parameters.x_center = atol(tmp[1]) + start[X];
+        fill_cylinder_parameters.y_center = atol(tmp[2]) + start[Y];
+        fill_cylinder_parameters.z_start  = atol(tmp[3]) + start[Z];
+        fill_cylinder_parameters.z_end    = atol(tmp[4]) + start[Z];
+        fill_cylinder_parameters.radius   = atof(tmp[5]);
+
+        fill_phase_cylinder(fill_cylinder_parameters, gridinfo, phase);
+        fill_phase_cylinder(fill_cylinder_parameters, gridinfo, NUMPHASES-1);
+
+        for (i = 0; i < 6; ++i) {
+          free(tmp[i]);
+        }
+        free(tmp);
+        printf("End filling cylinder\n");
+      }
+      else if ((strcmp(tmpstr1, "FILLCYLINDERNEXLP") == 0) && (NUMPHASES > 0) && ((NUMCOMPONENTS-1) >0)) {
+        printf("Filling cylinder not excluding last phase\n");
+        tmp = (char**)malloc(sizeof(char*)*6);
+        for (i = 0; i < 6; ++i) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+        phase = atol(tmp[0]);
+
+        fill_cylinder_parameters.x_center = atol(tmp[1]) + start[X];
+        fill_cylinder_parameters.y_center = atol(tmp[2]) + start[Y];
+        fill_cylinder_parameters.z_start  = atol(tmp[3]) + start[Z];
+        fill_cylinder_parameters.z_end    = atol(tmp[4]) + start[Z];
+        fill_cylinder_parameters.radius   = atof(tmp[5]);
+
+        fill_phase_cylinder_notexcluding_last_phase(fill_cylinder_parameters, gridinfo, phase);
+//         fill_phase_cylinder(fill_cylinder_parameters, gridinfo, NUMPHASES-1);
+
+        for (i = 0; i < 6; ++i) {
+          free(tmp[i]);
+        }
+        free(tmp);
+        printf("End filling cylinder\n");
+      }
+      else if ((strcmp(tmpstr1, "FILLSPHERE") == 0) && (NUMPHASES > 0) && ((NUMCOMPONENTS-1) >0)) {
+        tmp = (char**)malloc(sizeof(char*)*5);
+        for (i = 0; i < 5; ++i) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+        phase = atol(tmp[0]);
+
+        fill_sphere_parameters.x_center = atol(tmp[1]) + start[X];
+        fill_sphere_parameters.y_center = atol(tmp[2]) + start[Y];
+        fill_sphere_parameters.z_center = atol(tmp[3]) + start[Z];
+        fill_sphere_parameters.radius   = atof(tmp[4]);
+
+        fill_phase_sphere(fill_sphere_parameters, gridinfo, phase);
+        fill_phase_sphere(fill_sphere_parameters, gridinfo, NUMPHASES-1);
+
+        for (i = 0; i < 5; ++i) {
+          free(tmp[i]);
+        }
+        free(tmp);
+      }
+       else if ((strcmp(tmpstr1, "FILLSPHERENEXLP") == 0) && (NUMPHASES > 0) && ((NUMCOMPONENTS-1) >0)) {
+        tmp = (char**)malloc(sizeof(char*)*5);
+        for (i = 0; i < 5; ++i) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+        phase = atol(tmp[0]);
+
+        fill_sphere_parameters.x_center = atol(tmp[1]) + start[X];
+        fill_sphere_parameters.y_center = atol(tmp[2]) + start[Y];
+        fill_sphere_parameters.z_center = atol(tmp[3]) + start[Z];
+        fill_sphere_parameters.radius   = atof(tmp[4]);
+
+        fill_phase_sphere_notexcluding_last_phase(fill_sphere_parameters, gridinfo, phase);
+//         fill_phase_sphere(fill_sphere_parameters, gridinfo, NUMPHASES-1);
+
+        for (i = 0; i < 5; ++i) {
+          free(tmp[i]);
+        }
+        free(tmp);
+      }
+      else if ((strcmp(tmpstr1, "FILLELLIPSE") == 0) && (NUMPHASES > 0) && ((NUMCOMPONENTS-1) >0)) {
+        tmp = (char**)malloc(sizeof(char*)*7);
+        for (i = 0; i < 7; ++i) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+        phase = atol(tmp[0]);
+
+        fill_ellipse_parameters.x_center     = atol(tmp[1]) + start[X];
+        fill_ellipse_parameters.y_center     = atol(tmp[2]) + start[Y];
+        fill_ellipse_parameters.z_center     = atol(tmp[3]) + start[Z];
+        fill_ellipse_parameters.major_axis   = atol(tmp[4]);
+        fill_ellipse_parameters.eccentricity = atol(tmp[5]);
+        fill_ellipse_parameters.rot_angle    = atol(tmp[6]);
+
+        fill_phase_ellipse(fill_ellipse_parameters, gridinfo, phase);
+        fill_phase_ellipse(fill_ellipse_parameters, gridinfo, NUMPHASES-1);
+
+        for (i = 0; i < 7; ++i) {
+          free(tmp[i]);
+        }
+        free(tmp);
+
+      }
+      else if ((strcmp(tmpstr1, "FILLCYLINDERRANDOM") == 0) && (NUMPHASES > 0) && ((NUMCOMPONENTS-1) > 0)) {
+        printf("Filling cylinders at random\n");
+        tmp = (char**)malloc(sizeof(char*)*5);
+        for (i = 0; i < 5; i++) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+        phase                   = atol(tmp[0]);
+        long ppt_radius         = atol(tmp[1]);
+        double volume_fraction  = atof(tmp[2]);
+        long shield_dist        = atol(tmp[3]);
+        double spread           = atof(tmp[4]);
+
+        if (shield_dist > 8)
+            shield_dist = 8;
+        else if (shield_dist == 1)
+            shield_dist = 2;
+
+        fill_phase_cylinder_random(phase, ppt_radius, volume_fraction, shield_dist, spread);
+
+        for (i = 0; i < 5; i++) {
+          free(tmp[i]);
+        }
+        free(tmp);
+        printf("End filling cylinders at random\n");
+      }
+      else if ((strcmp(tmpstr1, "FILLCYLINDERRANDOMNEXLP") == 0) && (NUMPHASES > 0) && ((NUMCOMPONENTS-1) > 0)) {
+        printf("Filling cylinders at random\n");
+        tmp = (char**)malloc(sizeof(char*)*5);
+        for (i = 0; i < 5; i++) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+        phase                   = atol(tmp[0]);
+        long ppt_radius         = atol(tmp[1]);
+        double volume_fraction  = atof(tmp[2]);
+        long shield_dist        = atol(tmp[3]);
+        double spread           = atof(tmp[4]);
+
+        if (shield_dist > 8)
+            shield_dist = 8;
+        else if (shield_dist == 1)
+            shield_dist = 2;
+
+        fill_phase_cylinder_random_notexcluding_last_phase(phase, ppt_radius, volume_fraction, shield_dist, spread);
+
+        for (i = 0; i < 5; i++) {
+          free(tmp[i]);
+        }
+        free(tmp);
+        printf("End filling cylinders at random\n");
+      }
+      else if ((strcmp(tmpstr1, "FILLVORONOI2D") == 0) && (NUMPHASES > 0)) {
+        printf("Filling Voronoi 2D\n");
+        tmp = (char**)malloc(sizeof(char*)*6);
+        for (i = 0; i < 6; i++) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+
+        long x_start                 = atol(tmp[0]) + start[X];
+        long x_end                   = atol(tmp[1]) + start[X];
+        long y_start                 = atol(tmp[2]) + start[Y];
+        long y_end                   = atol(tmp[3]) + start[Y];
+        long NUMPOINTS               = atol(tmp[4]);
+        double SIZE                  = atof(tmp[5]);
+
+        fill_cube_parameters.x_start = x_start;
+        fill_cube_parameters.x_end   = x_end;
+        fill_cube_parameters.y_start = y_start;
+        fill_cube_parameters.y_end   = y_end;
+
+        fill_phase_voronoi_2D(fill_cube_parameters, gridinfo, NUMPOINTS, SIZE);
+
+
+        for (i = 0; i < 6; i++) {
+          free(tmp[i]);
+        }
+        free(tmp);
+        printf("End filling Voronoi 2D");
+      }
+      else if ( (strcmp(tmpstr1, "FILLCUBEPATTERN")==0) && (NUMPHASES>0) )
+      {
+        printf("Filling cube pattern.\n");
+        tmp = (char**)malloc(sizeof(char*)*7);
+        for ( i=0; i<7; i++)
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        for ( i=0, str1=tmpstr2; ; i++, str1=NULL )
+        {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if ( token==NULL )
+            break;
+          strcpy(tmp[i], token);
+        }
+        long variants  = atol(tmp[0]);
+        long sx        = atol(tmp[1]);
+        long sy        = atol(tmp[2]);
+        long sz        = atol(tmp[3]);
+        double sfrac   = atof(tmp[4]);
+        long gap       = atol(tmp[5]);
+        double gfrac   = atof(tmp[6]);
+        fill_cube_pattern(variants, sx, sy, sz, sfrac, gap, gfrac);
+        for ( i=0; i<7; i++)
+          free(tmp[i]);
+        free(tmp);
+        printf("End filling cube pattern.\n");
+      }
+      else if ((strcmp(tmpstr1, "FILLCUBERANDOM") == 0) && (NUMPHASES > 0)) {
+        printf("Filling random cubes.\n");
+        tmp = (char**)malloc(sizeof(char*)*7);
+        for (i = 0; i < 7; i++) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+            break;
+          strcpy(tmp[i],token);
+        }
+        long variants   = atol(tmp[0]);
+        long sx         = atol(tmp[1]);
+        long sy         = atol(tmp[2]);
+        long sz         = atol(tmp[3]);
+        double sfrac    = atof(tmp[4]);
+        double vol_frac = atof(tmp[5]);
+        long shield     = atol(tmp[6]);
+        fill_phase_cube_random_variants(variants, sx, sy, sz, sfrac, vol_frac, shield);
+        for (i = 0; i < 7; i++) {
+          free(tmp[i]);
+        }
+        free(tmp);
+        printf("End filling random cubes.\n");
+      }
+      else if ((strcmp(tmpstr1, "FILLVORONOI3D") == 0) && (NUMPHASES > 0)) {
+        printf("Filling Voronoi 3D\n");
+        tmp = (char**)malloc(sizeof(char*)*8);
+        for (i = 0; i < 8; i++) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+
+        long x_start                 = atol(tmp[0]) + start[X];
+        long x_end                   = atol(tmp[1]) + start[X];
+        long y_start                 = atol(tmp[2]) + start[Y];
+        long y_end                   = atol(tmp[3]) + start[Y];
+        long z_start                 = atol(tmp[4]) + start[Z];
+        long z_end                   = atol(tmp[5]) + start[Z];
+        long NUMPOINTS               = atol(tmp[6]);
+        double SIZE                  = atof(tmp[7]);
+
+        fill_cube_parameters.x_start = x_start;
+        fill_cube_parameters.x_end   = x_end;
+        fill_cube_parameters.y_start = y_start;
+        fill_cube_parameters.y_end   = y_end;
+        fill_cube_parameters.z_start = z_start;
+        fill_cube_parameters.z_end   = z_end;
+
+        fill_phase_voronoi_3D(fill_cube_parameters, gridinfo, NUMPOINTS, SIZE);
+
+        for (i = 0; i < 8; i++) {
+          free(tmp[i]);
+        }
+        free(tmp);
+        printf("End filling Voronoi 3D");
+      }
+      else if ((strcmp(tmpstr1, "FILLSPHERERANDOM") == 0) && (NUMPHASES > 0) && ((NUMCOMPONENTS-1) > 0)) {
+        printf("Filling spheres at random\n");
+        tmp = (char**)malloc(sizeof(char*)*5);
+        for (i = 0; i < 5; i++) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+
+        phase                   = atol(tmp[0]);
+        long ppt_radius         = atol(tmp[1]);
+        double volume_fraction  = atof(tmp[2]);
+        long shield_dist        = atol(tmp[3]);
+        double spread           = atof(tmp[4]);
+
+        if (shield_dist > 8)
+            shield_dist = 8;
+        else if (shield_dist == 1)
+            shield_dist = 2;
+
+        fill_phase_sphere_random(phase, ppt_radius, volume_fraction, shield_dist, spread);
+
+        for (i = 0; i < 5; i++) {
+          free(tmp[i]);
+        }
+        free(tmp);
+        printf("End filling spheres at random\n");
+      }
+      else if ((strcmp(tmpstr1, "FILLSPHERERANDOMNEXLP") == 0) && (NUMPHASES > 0) && ((NUMCOMPONENTS-1) > 0)) {
+        printf("Filling spheres at random\n");
+        tmp = (char**)malloc(sizeof(char*)*5);
+        for (i = 0; i < 5; i++) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+
+        phase                   = atol(tmp[0]);
+        long ppt_radius         = atol(tmp[1]);
+        double volume_fraction  = atof(tmp[2]);
+        long shield_dist        = atol(tmp[3]);
+        double spread           = atof(tmp[4]);
+
+        if (shield_dist > 8)
+            shield_dist = 8;
+        else if (shield_dist == 1)
+            shield_dist = 2;
+
+        fill_phase_sphere_random_notexcluding_last_phase(phase, ppt_radius, volume_fraction, shield_dist, spread);
+
+        for (i = 0; i < 5; i++) {
+          free(tmp[i]);
+        }
+        free(tmp);
+        printf("End filling spheres at random exlp\n");
+      }
+      else if ((strcmp(tmpstr1, "FILLCUBEVELOCITY") == 0) && (LBM)) {
+        printf("- Filling velocity vectors in a region\n");
+        tmp = (char**)malloc(sizeof(char*)*9);
+        for (i = 0; i < 9; i++) {
+          tmp[i] = (char*)malloc(sizeof(char)*10);
+        }
+        for (i = 0, str1 = tmpstr2; ; i++, str1 = NULL) {
+          token = strtok_r(str1, "{,}", &saveptr1);
+          if (token == NULL)
+              break;
+          strcpy(tmp[i],token);
+        }
+        double ux, uy, uz;
+        fill_cube_parameters.x_start = atol(tmp[0]) + start[X];
+        fill_cube_parameters.x_end   = atol(tmp[3]) + start[X];
+        fill_cube_parameters.y_start = atol(tmp[1]) + start[Y];
+        fill_cube_parameters.y_end   = atol(tmp[4]) + start[Y];
+        fill_cube_parameters.z_start = atol(tmp[2]) + start[Z];
+        fill_cube_parameters.z_end   = atol(tmp[5]) + start[Z];
+        
+        ux = atof(tmp[6]);
+        uy = atof(tmp[7]);
+        uz = atof(tmp[8]);
+
+        fill_velocity_cube(fill_cube_parameters, lbm_gridinfo, ux, uy, uz);
+        
+        for (i = 0; i < 9; i++) { 
+          free(tmp[i]);
+        }
+        free(tmp);
+      }
+
+    }
+  }
+  fclose(fr);
+  printf("Filling composition\n");
+  if ((FUNCTION_F !=5) && (!GRAIN_GROWTH)) {
+    fill_composition_cube(gridinfo);
+  }
+
+
+}
+#endif
