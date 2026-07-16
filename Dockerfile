@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 FROM ubuntu:22.04
 
 ARG OLLAMA_BASE_MODEL=gemma3:4b
@@ -72,13 +70,12 @@ RUN pip3 install --no-cache-dir \
         h5py \
         matplotlib
 
-# Ollama runtime
-RUN curl -fL --retry 50 --retry-delay 5 --retry-all-errors --retry-connrefused \
+RUN --mount=type=cache,target=/root/.cache/ollama-download,sharing=locked \
+    curl -fL --retry 50 --retry-delay 5 --retry-all-errors --retry-connrefused \
         -C - --connect-timeout 30 \
         https://ollama.com/download/ollama-linux-amd64.tar.zst \
-        -o /tmp/ollama.tar.zst \
-    && tar --zstd -C /usr -xf /tmp/ollama.tar.zst \
-    && rm -f /tmp/ollama.tar.zst \
+        -o /root/.cache/ollama-download/ollama.tar.zst \
+    && tar --zstd -C /usr -xf /root/.cache/ollama-download/ollama.tar.zst \
     && ollama --version
 
 # Download the base model at image-build time.
