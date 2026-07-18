@@ -255,10 +255,45 @@ def ask_ollama(user_message, system_prompt=None):
         return None
 
 
+def _extract_numbers(text):
+    """All numeric literals actually present in the user's text, as floats.
+    Used to verify the LLM didn't fabricate a value it wasn't given."""
+    matches = re.findall(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", text)
+    nums = set()
+    for m in matches:
+        try:
+            nums.add(float(m))
+        except ValueError:
+            pass
+    return nums
+
+
+def _is_grounded(value, number_pool, tol=1e-9):
+    """True if `value` (scalar or list) traces back to a number the user
+    actually typed. Non-numeric values (e.g. phase names) always pass --
+    this check only guards against fabricated numbers."""
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (int, float)):
+        return any(abs(float(value) - n) < tol for n in number_pool)
+    if isinstance(value, list):
+        return all(_is_grounded(v, number_pool, tol) for v in value)
+    return True
+
+
 def parse_prompt_llm(prompt, system_names, known_overrides=None):
     """Ask the local Ollama model to extract system + overrides.
     Returns (system_name | None, overrides_dict) or (None, {}) on failure.
     Never invents values for fields the user didn't mention.
+
+    Small local models don't reliably obey "don't guess" instructions in
+    their own system prompt -- they'll often fill in a plausible-looking
+    number anyway (e.g. inventing tau=2.5 when the user only said "slow
+    down relaxation" with no number). So beyond just asking nicely, every
+    numeric value the model returns is checked against
+    _extract_numbers(prompt) and dropped if it doesn't correspond to a
+    number the user actually typed. This is what actually enforces the
+    "never fabricate" rule.
     """
     if not _ollama_available():
         return None, {}
@@ -290,7 +325,16 @@ def parse_prompt_llm(prompt, system_names, known_overrides=None):
             continue
         coerced[k] = _coerce(v) if isinstance(v, str) else v
 
-    return resolved_system, coerced
+    number_pool = _extract_numbers(prompt)
+    grounded = {}
+    for k, v in coerced.items():
+        if _is_grounded(v, number_pool):
+            grounded[k] = v
+        else:
+            print(f"  [translator] Discarding {k}={v} suggested by the model -- "
+                  f"no matching number found in what you typed (looks fabricated).")
+
+    return resolved_system, grounded
 
 
 # ============================================================================
@@ -328,6 +372,48 @@ def translate(initial_text, base_dir, interactive=True):
 
     system = regex_system or llm_system
     overrides = merge_overrides(regex_overrides, llm_overrides)
+    prompt_lower = initial_text.lower()
+
+    if (
+        ("slower interface" in prompt_lower or
+         "faster interface" in prompt_lower or
+         "interface motion" in prompt_lower)
+        and "tau" not in overrides
+    ):
+        print(
+            "\nI interpreted 'interface motion' as modifying tau."
+        )
+
+        while True:
+            ans = input("What tau value would you like? ").strip()
+
+            if ans:
+                overrides["tau"] = _coerce(ans)
+                break
+
+    if (
+        ("diffusion" in prompt_lower or
+         "diffusivity" in prompt_lower or
+         "homogenization" in prompt_lower or
+         "segregation" in prompt_lower)
+        and "DIFFUSIVITY" not in overrides
+    ):
+        print(
+            "\nI interpreted your request as modifying diffusivity."
+        )
+
+        while True:
+            ans = input(
+                "Enter DIFFUSIVITY values (e.g. 1,0,D11,D22,D33,D12,D13,D23): "
+            ).strip()
+
+            if ans:
+                overrides["DIFFUSIVITY"] = [[
+                    _coerce(x.strip())
+                    for x in ans.split(",")
+]]
+                break
+    
     skipped_fields = detect_unchanged_fields(initial_text)
 
     if not interactive:
