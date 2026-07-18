@@ -90,9 +90,12 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
     # Added 'phase_map' to the list below
     num_pairs = max(1, num_phases * (num_phases - 1) // 2)
 
-    # Per-phase parameters (one value per phase)
+    # Per-phase parameters (one value per phase). NOTE: epsilon and tau are
+    # deliberately excluded -- they are always scalar values in microsim_gp,
+    # never per-phase arrays. Including them here causes the compiled
+    # solver's own validator to reject the generated Input.in with
+    # "epsilon must be a number, got: list".
     PARAMS_TO_PAD = [
-        'tau', 'epsilon',
         'ELASTICITY', 'DIFFUSIVITY', 'EIGEN_STRAIN', 'VOIGT_ISOTROPIC',
         'rho', 'damping_factor', 'A', 'ceq', 'cfill', 'c_guess', 'slopes', 'phase_map'
     ]
@@ -167,6 +170,18 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
                 config[key] = val[:num_phases]
 
     # 2b. Dynamic Auto-Padding — pairwise
+    # Safety net: epsilon/tau must always be scalars in microsim_gp. If
+    # they arrived as a list from anywhere (an old spec.json, a stray
+    # override), collapse back to a single value instead of writing an
+    # invalid Input.in.
+    for key in ("epsilon", "tau"):
+        if key in config and isinstance(config[key], list):
+            if config[key]:
+                config[key] = config[key][0]
+                print(f"  [Auto-Correction] {key} must be scalar; using first value.")
+            else:
+                del config[key]
+
     for key in PAIRWISE_PARAMS:
         if key in config:
             val = config[key]
