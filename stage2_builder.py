@@ -44,6 +44,27 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
 
     config = copy.deepcopy(base_config)
     if overrides:
+        for key, val in list(overrides.items()):
+            existing = base_config.get(key)
+            # A MULTI_LINE_KEYS parameter (DIFFUSIVITY, EIGEN_STRAIN, ceq,
+            # etc.) is stored as a list of structured per-phase entries,
+            # e.g. [diagonal_flag, phase_index, D11, D22, ...]. If the
+            # preset already stores it that way but an override tries to
+            # replace it with a bare scalar or flat list, silently
+            # accepting that would corrupt the structure the compiled
+            # solver expects -- exactly the kind of malformed input that
+            # crashes microsim_gp instead of failing gracefully. Reject
+            # it here instead of letting it reach the padding logic.
+            if (key in MULTI_LINE_KEYS and isinstance(existing, list)
+                    and existing and isinstance(existing[0], list)
+                    and not (isinstance(val, list) and val and isinstance(val[0], list))):
+                print(f"  [Auto-Correction] Ignoring override for '{key}' -- this preset "
+                      f"stores it as structured per-phase data (e.g. "
+                      f"{existing[0]}), but the override was a plain value "
+                      f"({val!r}). Refusing to flatten it, since that would "
+                      f"produce a config the solver can't safely parse. "
+                      f"Keeping the preset's existing '{key}' data unchanged.")
+                overrides.pop(key)
         config.update(overrides)
 
     if boundary_field_overrides:
