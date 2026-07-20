@@ -283,7 +283,10 @@ def _is_grounded(value, number_pool, tol=1e-9):
 
 def parse_prompt_llm(prompt, system_names, known_overrides=None):
     """Ask the local Ollama model to extract system + overrides.
-    Returns (system_name | None, overrides_dict) or (None, {}) on failure.
+    Returns (system_name | None, overrides_dict, mentioned_no_value_keys)
+    or (None, {}, []) on failure. mentioned_no_value_keys lists parameter
+    keys the model believes the user referenced conceptually but for
+    which no grounded number was found in the prompt.
     Never invents values for fields the user didn't mention.
 
     Small local models don't reliably obey "don't guess" instructions in
@@ -296,7 +299,7 @@ def parse_prompt_llm(prompt, system_names, known_overrides=None):
     "never fabricate" rule.
     """
     if not _ollama_available():
-        return None, {}
+        return None, {}, []
 
     all_params = set()
     for _, keys in SECTIONS:
@@ -305,13 +308,13 @@ def parse_prompt_llm(prompt, system_names, known_overrides=None):
 
     raw = ask_ollama(prompt)
     if not raw:
-        return None, {}
+        return None, {}, []
 
     try:
         text = re.sub(r"```json\s*|```\s*", "", raw).strip()
         parsed = json.loads(text)
     except Exception:
-        return None, {}
+        return None, {}, []
 
     system_lookup = {s.lower(): s for s in system_names}
     raw_system = parsed.get("system")
@@ -327,14 +330,16 @@ def parse_prompt_llm(prompt, system_names, known_overrides=None):
 
     number_pool = _extract_numbers(prompt)
     grounded = {}
+    mentioned_no_value = []
     for k, v in coerced.items():
         if _is_grounded(v, number_pool):
             grounded[k] = v
         else:
             print(f"  [translator] Discarding {k}={v} suggested by the model -- "
                   f"no matching number found in what you typed (looks fabricated).")
+            mentioned_no_value.append(k)
 
-    return resolved_system, grounded
+    return resolved_system, grounded, mentioned_no_value
 
 
 # ============================================================================
@@ -368,52 +373,30 @@ def translate(initial_text, base_dir, interactive=True):
     system_names = list(systems.keys())
 
     regex_system, regex_overrides = parse_prompt_regex(initial_text, system_names, systems=systems)
-    llm_system, llm_overrides = parse_prompt_llm(initial_text, system_names)
+    llm_system, llm_overrides, mentioned_no_value = parse_prompt_llm(initial_text, system_names)
 
     system = regex_system or llm_system
     overrides = merge_overrides(regex_overrides, llm_overrides)
-    prompt_lower = initial_text.lower()
 
-    if (
-        ("slower interface" in prompt_lower or
-         "faster interface" in prompt_lower or
-         "interface motion" in prompt_lower)
-        and "tau" not in overrides
-    ):
-        print(
-            "\nI interpreted 'interface motion' as modifying tau."
-        )
-
+    # Generic follow-up for ANY parameter the model recognized as
+    # referenced (from its baked MicroSim domain knowledge -- see
+    # build_modelfile.py) but couldn't ground a specific number for.
+    # Not hardcoded to any particular parameter -- works the same way
+    # whether the user's intent maps to tau, epsilon, GAMMA, DIFFUSIVITY,
+    # or anything else the model knows about.
+    for key in mentioned_no_value:
+        if key in overrides:
+            continue  # already resolved by regex or a grounded LLM value
         while True:
-            ans = input("What tau value would you like? ").strip()
-
-            if ans:
-                overrides["tau"] = _coerce(ans)
+            ans = input(f"  You mentioned something related to '{key}' -- "
+                        f"what value would you like? (comma-separate multiple "
+                        f"values, or leave blank to skip): ").strip()
+            if not ans:
                 break
+            parts = [p.strip() for p in ans.split(",") if p.strip()]
+            overrides[key] = [_coerce(p) for p in parts] if len(parts) > 1 else _coerce(parts[0])
+            break
 
-    if (
-        ("diffusion" in prompt_lower or
-         "diffusivity" in prompt_lower or
-         "homogenization" in prompt_lower or
-         "segregation" in prompt_lower)
-        and "DIFFUSIVITY" not in overrides
-    ):
-        print(
-            "\nI interpreted your request as modifying diffusivity."
-        )
-
-        while True:
-            ans = input(
-                "Enter DIFFUSIVITY values (e.g. 1,0,D11,D22,D33,D12,D13,D23): "
-            ).strip()
-
-            if ans:
-                overrides["DIFFUSIVITY"] = [[
-                    _coerce(x.strip())
-                    for x in ans.split(",")
-]]
-                break
-    
     skipped_fields = detect_unchanged_fields(initial_text)
 
     if not interactive:
@@ -441,7 +424,7 @@ def translate(initial_text, base_dir, interactive=True):
             match = next((s for s in system_names if s.lower() == answer.lower()), None)
             if not match:
                 # Try the LLM once more with the direct answer
-                match, extra = parse_prompt_llm(answer, system_names)
+                match, extra, _extra_mentioned = parse_prompt_llm(answer, system_names)
                 overrides = merge_overrides(overrides, extra)
             system = match or answer
         else:
