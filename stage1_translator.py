@@ -73,6 +73,12 @@ ELEMENT_KEYWORDS = {
     "tantalum": "Ta",
 }
 
+# All recognized element symbols (uppercase and lowercase)
+ALL_ELEMENT_SYMBOLS = {
+    "AL", "ZN", "NI", "CU", "MO", "NB", "CR", "CO",
+    "FE", "TI", "W", "TA",
+}
+
 SYSTEM_NAME_ALIASES = {
     "NiAlCr": ["chromium", "chromate", "cr alloy"],
 }
@@ -90,36 +96,97 @@ UNCHANGED_SIGNAL_WORDS = {
 }
 UNCHANGED_PATTERN = r"(same|unchanged|as[- ]is|no change|keep it)"
 QUIT_COMMANDS = {"quit", "exit", "q", "bye", "goodbye"}
+MAX_GARBAGE_ATTEMPTS = 3
+
+SIMULATION_DOMAIN_TERMS = [
+    "mesh", "phase", "timestep", "temperature", "grid",
+    "component", "dimension", "delta", "epsilon", "gamma",
+    "diffusivity", "elasticity", "boundary", "noise",
+    "anisotropy", "filling", "equilibrium", "save", "restart",
+    "molar", "volume", "damping", "stress", "concentration",
+    "composition", "simulation", "simulate", "alloy",
+    "solidification", "precipitation", "microstructure",
+    "eutectic", "peritectic", "spinodal", "nucleation",
+    "binary", "ternary", "isothermal", "grain", "domain",
+    "relaxation", "interface", "energy", "free energy",
+    "function", "parabolic", "spline", "calphad", "thermodynamic",
+    "database", "tdb", "matrix", "liquid", "solid", "fcc", "bcc",
+    "hcp", "cubic", "input", "filling", "run", "execute",
+]
+
+
+def classify_input(prompt):
+    """Fast regex-based filter to distinguish simulation requests from garbage.
+    Returns 'valid' if the input could be a simulation request, 'garbage' otherwise.
+    Handles full names ('aluminum'), symbols ('al'), and CamelCase ('NiAl')."""
+    p = prompt.strip().lower()
+    if len(p) < 2:
+        return "garbage"
+
+    # 1. Element full names (aluminum, cobalt, nickel, etc.)
+    for word in ELEMENT_KEYWORDS:
+        if re.search(rf"\b{re.escape(word)}\b", p):
+            return "valid"
+
+    # 2. Element symbols: 1-2 letter words that are known symbols
+    #    ('al', 'co', 'ni' → valid; 'aa', 'zz' → garbage)
+    words = re.findall(r"\b[a-zA-Z]{1,3}\b", p)
+    for w in words:
+        if w.upper() in ALL_ELEMENT_SYMBOLS:
+            return "valid"
+
+    # 3. Domain-specific terms as whole words (mesh, phase, temperature, etc.)
+    for term in SIMULATION_DOMAIN_TERMS:
+        if re.search(rf"\b{re.escape(term)}\b", p):
+            return "valid"
+
+    # 4. CamelCase system names like NiAl, AlZn, NiAlCr
+    if re.search(r"[A-Z][a-z]+[A-Z]", prompt):
+        return "valid"
+
+    # 5. Underscore names like AlZn_eutectic
+    if re.search(r"\w+_\w+", p):
+        return "valid"
+
+    # 6. Parameter keyword followed by = or : and a number: 'phases=3', 'mesh_x=200'
+    if re.search(r"(?:mesh|phase|timestep|temperature|dimension|delta|epsilon|gamma|num)\w*\s*[=:]\s*\d", p):
+        return "valid"
+
+    # 7. Parameter keyword followed by a number: 'phases 3', 'mesh 200'
+    if re.search(r"(?:mesh|phase|timestep|temperature|dimension|num)\w*\s+\d", p):
+        return "valid"
+
+    # 8. Temperature with explicit unit: '1500K', '1500 k' (NOT bare '200')
+    if re.search(r"\d+\s*[kK]\b", p) and re.search(r"(?:temp|t\s*=|temperature)", p):
+        return "valid"
+
+    return "garbage"
 
 
 def check_input_quality(prompt):
-    """Use Ollama to determine if the input is a meaningful simulation request.
-    Returns (is_meaningful, ai_message_to_user)."""
+    """Use Ollama to generate a friendly rejection message for garbage input.
+    Always returns (False, message) -- this is only called after classify_input
+    already determined the input is garbage, so we just need the AI to explain
+    to the user what went wrong."""
     raw = ask_ollama(
-        f"A user is interacting with a materials science phase-field simulation assistant. "
-        f"The assistant helps users run alloy simulations (e.g. NiAl, AlZn, AlCo, etc.) "
-        f"by asking them to describe what they want to simulate.\n\n"
-        f"The user just typed: '{prompt}'\n\n"
-        f"Is this a meaningful request that could relate to alloy simulation, "
-        f"phase-field modeling, thermodynamics, materials science, or specifying "
-        f"simulation parameters (phases, mesh, temperature, components, etc.)? "
-        f"It is OK if it is vague -- the assistant can ask follow-up questions. "
-        f"Only flag it as NOT meaningful if it is pure gibberish, a random keyboard "
-        f"smash, completely unrelated to science/engineering, or just a bare greeting "
-        f"with zero simulation intent.\n\n"
-        f"If YES (meaningful), respond ONLY with: {{\"ok\": true, \"msg\": \"\"}}\n"
-        f"If NO (not meaningful), respond ONLY with: {{\"ok\": false, \"msg\": \"<a short "
-        f"friendly message from you telling the user their input was not understood "
-        f"and asking them to try again, describing the simulation they want>\"}}"
+        f"A user is interacting with a materials science simulation assistant. "
+        f"The assistant helps users set up alloy phase-field simulations.\n\n"
+        f"The user typed: '{prompt}'\n\n"
+        f"This input was NOT recognized as a valid simulation request. "
+        f"Generate a short, friendly message (1-2 sentences) telling the user "
+        f"their input was not understood and asking them to describe the alloy "
+        f"system or simulation they want to run. For example they could type "
+        f"'aluminum cobalt' or 'NiAl with 6 phases'. "
+        f'Respond with ONLY this JSON: {{"msg": "<your message>"}}'
     )
     if raw:
         try:
             text = re.sub(r"```json\s*|```\s*", "", raw).strip()
             parsed = json.loads(text)
-            return parsed.get("ok", True), parsed.get("msg", "")
+            return False, parsed.get("msg", "")
         except Exception:
             pass
-    return True, ""
+    return False, ""
 
 
 def detect_unchanged_fields(prompt):
@@ -134,34 +201,189 @@ def detect_unchanged_fields(prompt):
 
 
 def extract_components_from_prompt(prompt):
+    """Extract element symbols from the prompt.
+    Matches both full names ('aluminum' → 'Al') and symbols ('al' → 'Al')."""
     components = []
+    # Full names (aluminum, cobalt, nickel, etc.)
     for word, sym in ELEMENT_KEYWORDS.items():
-        if re.search(rf"\b{word}\b", prompt, re.IGNORECASE):
+        if re.search(rf"\b{re.escape(word)}\b", prompt, re.IGNORECASE):
             if sym not in components:
                 components.append(sym)
+    # Short symbols (al, co, ni, etc.) — only 1-2 letter words to avoid
+    # matching random English words like 'in', 'on', 'at'
+    # Map uppercase back to mixed-case from ELEMENT_KEYWORDS
+    _sym_to_mixed = {v.upper(): v for v in ELEMENT_KEYWORDS.values()}
+    words = re.findall(r"\b([A-Za-z]{1,2})\b", prompt)
+    for w in words:
+        sym = w.upper()
+        if sym in ALL_ELEMENT_SYMBOLS:
+            mixed = _sym_to_mixed[sym]
+            if mixed not in components:
+                components.append(mixed)
     return components
 
 
-def collect_new_system_info(interactive=True):
-    info = {}
-    for key, question in NEW_SYSTEM_QUESTIONS:
-        if interactive:
-            try:
-                answer = input(f"  {question} ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print("\n  Using defaults for remaining fields.")
-                answer = ""
-        else:
-            answer = ""
+# ============================================================================
+# InputCollector — validated per-field user input
+# ============================================================================
 
-        if key == "COMPONENTS":
-            components = [c.strip().upper() for c in answer.split(",") if c.strip()]
-            info["COMPONENTS"] = components
-            info["NUMCOMPONENTS"] = len(components)
-        elif key in ("MESH_X", "MESH_Y", "NTIMESTEPS", "NUMPHASES", "DIMENSION"):
-            info[key] = _coerce(answer) if answer else None
-        elif key == "T":
-            info[key] = _coerce(answer) if answer else None
+VALID_ELEMENT_SYMBOLS = {v.upper() for v in ELEMENT_KEYWORDS.values()}
+
+
+class InputCollector:
+    """Handles all interactive user input with per-field validation.
+    Every field that asks the user for a value validates it before accepting."""
+
+    @staticmethod
+    def _ask(prompt_text):
+        """Raw input with quit/EOF handling. Returns (text, should_quit)."""
+        return _get_user_input(prompt_text)
+
+    @staticmethod
+    def get_number(prompt, min_val=None, max_val=None, allow_float=True, default=None):
+        """Ask for a numeric value. Reprompts until a valid number is entered.
+        Returns the number, or default if user skips, or None if user quits."""
+        while True:
+            text, quit = InputCollector._ask(prompt)
+            if quit:
+                return None
+            if not text:
+                if default is not None:
+                    return default
+                print("  This field requires a value. Please enter a number.")
+                continue
+            try:
+                val = float(text)
+                if not allow_float and val == int(val):
+                    val = int(val)
+                if min_val is not None and float(val) < min_val:
+                    print(f"  Value must be at least {min_val}. Try again.")
+                    continue
+                if max_val is not None and float(val) > max_val:
+                    print(f"  Value must be at most {max_val}. Try again.")
+                    continue
+                return val
+            except ValueError:
+                print(f"  '{text}' is not a valid number. Please enter a numeric value.")
+
+    @staticmethod
+    def get_int(prompt, min_val=None, max_val=None, default=None):
+        """Ask for an integer value. Reprompts until valid."""
+        while True:
+            result = InputCollector.get_number(
+                prompt, min_val=min_val, max_val=max_val,
+                allow_float=False, default=default,
+            )
+            if result is None:
+                return None
+            return int(result)
+
+    @staticmethod
+    def get_components(prompt):
+        """Ask for alloy components. Validates each is a known element symbol.
+        Returns list of element symbols, or None if user quits."""
+        while True:
+            text, quit = InputCollector._ask(prompt)
+            if quit:
+                return None
+            if not text:
+                print("  Please enter at least one component (e.g. Al, Co).")
+                continue
+            parts = [c.strip().upper() for c in text.split(",") if c.strip()]
+            if not parts:
+                print("  Please enter at least one component (e.g. Al, Co).")
+                continue
+            invalid = [c for c in parts if c not in VALID_ELEMENT_SYMBOLS]
+            if invalid:
+                print(f"  Unknown element(s): {', '.join(invalid)}.")
+                print(f"  Use valid symbols like: {', '.join(sorted(VALID_ELEMENT_SYMBOLS))}")
+                continue
+            return parts
+
+    @staticmethod
+    def get_yes_no(prompt, default=None):
+        """Ask a yes/no question. Returns True/False, or default if skipped."""
+        while True:
+            text, quit = InputCollector._ask(prompt)
+            if quit:
+                return None
+            text_lower = text.lower().strip()
+            if text_lower in ("y", "yes"):
+                return True
+            if text_lower in ("n", "no"):
+                return False
+            if not text and default is not None:
+                return default
+            print("  Please enter 'y' or 'n'.")
+
+
+def collect_new_system_info(interactive=True):
+    """Ask user for basic parameters to define a new alloy system.
+    Uses InputCollector for per-field validation — every numeric field
+    reprompts until a valid number is entered."""
+    if not interactive:
+        return {}
+
+    info = {}
+
+    components = InputCollector.get_components(
+        "  What are the chemical components/elements? (comma-separated, e.g. Al, Co): "
+    )
+    if components is None:
+        return info
+    info["COMPONENTS"] = components
+    info["NUMCOMPONENTS"] = len(components)
+
+    n_comp = len(components)
+    default_phases = n_comp + 1
+
+    num_phases = InputCollector.get_int(
+        f"  How many phases? (default {default_phases}): ",
+        min_val=1, max_val=50, default=default_phases,
+    )
+    if num_phases is None:
+        return info
+    info["NUMPHASES"] = int(num_phases)
+
+    mesh_x = InputCollector.get_int(
+        "  Grid width (MESH_X)? (default 100): ",
+        min_val=1, max_val=10000, default=100,
+    )
+    if mesh_x is None:
+        return info
+    info["MESH_X"] = int(mesh_x)
+
+    mesh_y = InputCollector.get_int(
+        "  Grid height (MESH_Y)? (default 100): ",
+        min_val=1, max_val=10000, default=100,
+    )
+    if mesh_y is None:
+        return info
+    info["MESH_Y"] = int(mesh_y)
+
+    timesteps = InputCollector.get_int(
+        "  How many timesteps? (default 100000): ",
+        min_val=1, max_val=100000000, default=100000,
+    )
+    if timesteps is None:
+        return info
+    info["NTIMESTEPS"] = int(timesteps)
+
+    temp = InputCollector.get_number(
+        "  Simulation temperature in K? (default 1000): ",
+        min_val=1, max_val=100000, default=1000,
+    )
+    if temp is None:
+        return info
+    info["T"] = temp
+
+    dim = InputCollector.get_int(
+        "  Dimension (2 or 3)? (default 2): ",
+        min_val=2, max_val=3, default=2,
+    )
+    if dim is None:
+        return info
+    info["DIMENSION"] = int(dim)
 
     return info
 
@@ -477,8 +699,32 @@ def translate(initial_text, base_dir, interactive=True):
     # --- Interactive mode: loop until system identified or user quits ---
     prompt = initial_text
     empty_count = 0
+    garbage_count = 0
 
     while True:
+        # --- Fast garbage filter: reject obviously invalid input immediately ---
+        if classify_input(prompt) == "garbage":
+            garbage_count += 1
+            if garbage_count >= MAX_GARBAGE_ATTEMPTS:
+                print(f"\n  {MAX_GARBAGE_ATTEMPTS} unrecognized inputs in a row. Exiting.")
+                return {"system": None, "overrides": {}, "raw_prompt": initial_text}
+            _, ai_msg = check_input_quality(prompt)
+            remaining = MAX_GARBAGE_ATTEMPTS - garbage_count
+            hint = f" ({remaining} attempt{'s' if remaining != 1 else ''} left)" if remaining else ""
+            if ai_msg:
+                print(f"  {ai_msg}{hint}")
+            else:
+                print(f"  That doesn't seem related to alloy simulation.{hint}")
+                print("  Try something like 'aluminum cobalt' or 'NiAl with 6 phases'.")
+            text, quit = _get_user_input()
+            if quit:
+                return {"system": None, "overrides": {}, "raw_prompt": initial_text}
+            prompt = text
+            continue
+
+        # --- Input passed the filter: reset garbage counter and proceed ---
+        garbage_count = 0
+
         system, overrides = _try_parse(prompt, system_names, systems)
 
         # 1. Exact system match found -- clarify missing fields and return
@@ -509,24 +755,7 @@ def translate(initial_text, base_dir, interactive=True):
                 empty_count = 0
                 continue
 
-        # 3. Nothing recognizable -- use AI to check if input is garbage
-        meaningful, ai_msg = check_input_quality(prompt)
-        if not meaningful:
-            print(f"  {ai_msg}" if ai_msg else "  Input not recognized. Please try again.")
-            text, quit = _get_user_input()
-            if quit:
-                return {"system": None, "overrides": {}, "raw_prompt": initial_text}
-            if not text:
-                empty_count += 1
-                if empty_count >= 3:
-                    print("  No valid input received. Exiting.")
-                    return {"system": None, "overrides": {}, "raw_prompt": initial_text}
-                continue
-            empty_count = 0
-            prompt = text
-            continue
-
-        # 4. Input is meaningful but couldn't match -- ask for clarification
+        # 3. Nothing recognizable -- ask for clarification
         print(f"\n  Available systems: {', '.join(system_names)}")
         text, quit = _get_user_input(
             "  I couldn't match that to an existing system. "
