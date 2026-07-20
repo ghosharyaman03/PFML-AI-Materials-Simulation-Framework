@@ -320,9 +320,10 @@ class InputCollector:
 def collect_new_system_info(interactive=True):
     """Ask user for basic parameters to define a new alloy system.
     Uses InputCollector for per-field validation — every numeric field
-    reprompts until a valid number is entered."""
+    reprompts until a valid number is entered.
+    Returns None if user quits at any point."""
     if not interactive:
-        return {}
+        return None
 
     info = {}
 
@@ -330,7 +331,7 @@ def collect_new_system_info(interactive=True):
         "  What are the chemical components/elements? (comma-separated, e.g. Al, Co): "
     )
     if components is None:
-        return info
+        return None
     info["COMPONENTS"] = components
     info["NUMCOMPONENTS"] = len(components)
 
@@ -342,7 +343,7 @@ def collect_new_system_info(interactive=True):
         min_val=1, max_val=50, default=default_phases,
     )
     if num_phases is None:
-        return info
+        return None
     info["NUMPHASES"] = int(num_phases)
 
     mesh_x = InputCollector.get_int(
@@ -350,7 +351,7 @@ def collect_new_system_info(interactive=True):
         min_val=1, max_val=10000, default=100,
     )
     if mesh_x is None:
-        return info
+        return None
     info["MESH_X"] = int(mesh_x)
 
     mesh_y = InputCollector.get_int(
@@ -358,7 +359,7 @@ def collect_new_system_info(interactive=True):
         min_val=1, max_val=10000, default=100,
     )
     if mesh_y is None:
-        return info
+        return None
     info["MESH_Y"] = int(mesh_y)
 
     timesteps = InputCollector.get_int(
@@ -366,7 +367,7 @@ def collect_new_system_info(interactive=True):
         min_val=1, max_val=100000000, default=100000,
     )
     if timesteps is None:
-        return info
+        return None
     info["NTIMESTEPS"] = int(timesteps)
 
     temp = InputCollector.get_number(
@@ -374,7 +375,7 @@ def collect_new_system_info(interactive=True):
         min_val=1, max_val=100000, default=1000,
     )
     if temp is None:
-        return info
+        return None
     info["T"] = temp
 
     dim = InputCollector.get_int(
@@ -382,7 +383,7 @@ def collect_new_system_info(interactive=True):
         min_val=2, max_val=3, default=2,
     )
     if dim is None:
-        return info
+        return None
     info["DIMENSION"] = int(dim)
 
     return info
@@ -632,14 +633,16 @@ def _try_parse(prompt, system_names, systems):
 def _offer_new_system(system_names):
     """Ask user if they want to create a new system. Returns spec dict or None."""
     print(f"\n  Available systems: {', '.join(system_names)}")
-    try:
-        answer = input("  Would you like to create a NEW alloy system? [y/N] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print("\n  Goodbye.")
-        return {"system": None, "overrides": {}, "raw_prompt": ""}
+    text, quit = _get_user_input(
+        "  Would you like to create a NEW alloy system? [y/N] "
+    )
+    if quit:
+        return None
 
-    if answer in ("y", "yes"):
+    if text.lower() in ("y", "yes"):
         new_info = collect_new_system_info(True)
+        if new_info is None:
+            return None
         if new_info.get("COMPONENTS"):
             n_comp = new_info.get("NUMCOMPONENTS", 2)
             new_info.setdefault("NUMPHASES", n_comp + 1)
@@ -747,13 +750,8 @@ def translate(initial_text, base_dir, interactive=True):
                 if result:
                     result["raw_prompt"] = initial_text
                     return result
-                # User said no -- keep looping
-                text, quit = _get_user_input()
-                if quit:
-                    return {"system": None, "overrides": {}, "raw_prompt": initial_text}
-                prompt = text
-                empty_count = 0
-                continue
+                # User quit or said no — stop immediately
+                return {"system": None, "overrides": {}, "raw_prompt": initial_text}
 
         # 3. Nothing recognizable -- ask for clarification
         print(f"\n  Available systems: {', '.join(system_names)}")
