@@ -118,7 +118,8 @@ SIMULATION_DOMAIN_TERMS = [
 def classify_input(prompt):
     """Fast regex-based filter to distinguish simulation requests from garbage.
     Returns 'valid' if the input could be a simulation request, 'garbage' otherwise.
-    Handles full names ('aluminum'), symbols ('al'), and CamelCase ('NiAl')."""
+    Handles full names ('aluminum'), symbols ('al'), and CamelCase ('NiAl').
+    Rejects garbage values like '2000dx' or 'banana'."""
     p = prompt.strip().lower()
     if len(p) < 2:
         return "garbage"
@@ -128,35 +129,32 @@ def classify_input(prompt):
         if re.search(rf"\b{re.escape(word)}\b", p):
             return "valid"
 
-    # 2. Element symbols: 1-2 letter words that are known symbols
+    # 2. Element symbols: 1-3 letter words that are known symbols
     #    ('al', 'co', 'ni' → valid; 'aa', 'zz' → garbage)
     words = re.findall(r"\b[a-zA-Z]{1,3}\b", p)
     for w in words:
         if w.upper() in ALL_ELEMENT_SYMBOLS:
             return "valid"
 
-    # 3. Domain-specific terms as whole words (mesh, phase, temperature, etc.)
-    for term in SIMULATION_DOMAIN_TERMS:
-        if re.search(rf"\b{re.escape(term)}\b", p):
-            return "valid"
-
-    # 4. CamelCase system names like NiAl, AlZn, NiAlCr
+    # 3. CamelCase system names like NiAl, AlZn, NiAlCr
     if re.search(r"[A-Z][a-z]+[A-Z]", prompt):
         return "valid"
 
-    # 5. Underscore names like AlZn_eutectic
+    # 4. Underscore names like AlZn_eutectic
     if re.search(r"\w+_\w+", p):
         return "valid"
 
-    # 6. Parameter keyword followed by = or : and a number: 'phases=3', 'mesh_x=200'
-    if re.search(r"(?:mesh|phase|timestep|temperature|dimension|delta|epsilon|gamma|num)\w*\s*[=:]\s*\d", p):
+    # 5. Parameter keyword followed by = or : and a CLEAN number
+    #    'phases=3' → valid, 'mesh=2000dx' → garbage, 'mesh_x=200' → valid
+    if re.search(r"(?:mesh|phase|timestep|temperature|dimension|delta|epsilon|gamma|num)\w*\s*[=:]\s*\d+(?!\w)", p):
         return "valid"
 
-    # 7. Parameter keyword followed by a number: 'phases 3', 'mesh 200'
-    if re.search(r"(?:mesh|phase|timestep|temperature|dimension|num)\w*\s+\d", p):
+    # 6. Parameter keyword followed by a CLEAN number
+    #    'phases 3' → valid, 'mesh 2000' → valid, 'mesh 2000dx' → garbage
+    if re.search(r"(?:mesh|phase|timestep|temperature|dimension|num)\w*\s+\d+(?!\w)", p):
         return "valid"
 
-    # 8. Temperature with explicit unit: '1500K', '1500 k' (NOT bare '200')
+    # 7. Temperature with explicit unit: '1500K', '1500 k' (NOT bare '200')
     if re.search(r"\d+\s*[kK]\b", p) and re.search(r"(?:temp|t\s*=|temperature)", p):
         return "valid"
 
@@ -655,28 +653,43 @@ def _offer_new_system(system_names):
     return None
 
 
+NUMERIC_FIELDS = {"NUMPHASES", "MESH_X", "MESH_Y", "NTIMESTEPS"}
+
 def _prompt_missing_fields(system, overrides, skipped_fields, system_names):
-    """Interactively ask for any FIELDS_WORTH_ASKING that are still missing."""
+    """Interactively ask for any FIELDS_WORTH_ASKING that are still missing.
+    Uses InputCollector for numeric fields. Returns (system, overrides, quit_flag)."""
     missing = missing_fields(system, overrides, skipped_fields)
     while missing:
         key, question = missing[0]
         if key == "system" and system_names:
             print(f"\n  Available systems: {', '.join(system_names)}")
-        text, quit = _get_user_input(f"  {question} ")
-        if quit or not text:
-            missing.pop(0)
-            continue
-        if key == "system":
-            match = next((s for s in system_names if s.lower() == text.lower()), None)
-            if not match:
-                match, extra, _extra_mentioned = parse_prompt_llm(text, system_names)
-                overrides = merge_overrides(overrides, extra)
-            system = match or text
+
+        if key in NUMERIC_FIELDS:
+            val = InputCollector.get_int(
+                f"  {question} ", min_val=1, max_val=100000000, default=None,
+            )
+            if val is None:
+                return system, overrides, True
+            overrides[key] = int(val)
         else:
-            parts = [p.strip() for p in text.split(",")]
-            overrides[key] = [_coerce(p) for p in parts] if len(parts) > 1 else _coerce(text)
+            text, quit = _get_user_input(f"  {question} ")
+            if quit:
+                return system, overrides, True
+            if not text:
+                missing.pop(0)
+                continue
+            if key == "system":
+                match = next((s for s in system_names if s.lower() == text.lower()), None)
+                if not match:
+                    match, extra, _extra_mentioned = parse_prompt_llm(text, system_names)
+                    overrides = merge_overrides(overrides, extra)
+                system = match or text
+            else:
+                parts = [p.strip() for p in text.split(",")]
+                overrides[key] = [_coerce(p) for p in parts] if len(parts) > 1 else _coerce(text)
+
         missing = missing_fields(system, overrides, skipped_fields)
-    return system, overrides
+    return system, overrides, False
 
 
 def translate(initial_text, base_dir, interactive=True):
@@ -732,9 +745,11 @@ def translate(initial_text, base_dir, interactive=True):
 
         # 1. Exact system match found -- clarify missing fields and return
         if system and system in systems:
-            system, overrides = _prompt_missing_fields(
+            system, overrides, quit = _prompt_missing_fields(
                 system, overrides, detect_unchanged_fields(prompt), system_names
             )
+            if quit:
+                return {"system": None, "overrides": {}, "raw_prompt": initial_text}
             return {"system": system, "overrides": overrides, "raw_prompt": initial_text}
 
         # 2. Elements mentioned but don't match any existing system
