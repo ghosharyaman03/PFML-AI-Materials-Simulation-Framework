@@ -2,26 +2,15 @@
 """
 stage1_translator.py
 =====================
-Turns a user's free-form paragraph into a structured simulation spec, e.g.
+Turns a user's free-form paragraph into a structured simulation spec.
 
-  "hey can u run something with that aluminum zinc alloy, the eutectic one,
-   give it like 6 phases and make the grid a bit bigger, maybe 200 by 200,
-   and let it run for a good while, 150000 steps"
+Supports two modes:
+  1. Existing system: matches to a preset in Example_Systems/
+  2. New system: creates a custom config from a template
 
-      -->
-
-  {"system": "AlZn_eutectic",
-   "overrides": {"NUMPHASES": 6, "MESH_X": 200, "MESH_Y": 200, "NTIMESTEPS": 150000}}
-
-It never invents thermodynamic values, TDB choices, or anything belonging
-to stage2/stage3 -- it only figures out *which* system and *which*
-parameters the user wants changed. If it can't confidently fill in the
-handful of fields that matter (system, NUMPHASES, MESH_X, MESH_Y,
-NTIMESTEPS), it asks the user directly instead of guessing.
-
-Uses a local Ollama model (small, e.g. 2B) to help parse messy language,
-with the existing regex parser (shared_core.parse_prompt-equivalent) as
-a free, fast first pass and a safety net if Ollama is unavailable.
+For new systems, asks the user for basic parameters (components, phases,
+mesh, timesteps, temperature) and auto-pads all thermodynamic values
+from a template system.
 
 Usage:
   Interactive:  python3 stage1_translator.py
@@ -30,7 +19,7 @@ Usage:
 Env vars:
   MICROSIM_DIR    Path to microsim_gp directory (default: /app/microsim_gp)
   OLLAMA_HOST     Base URL of the Ollama server (default: http://localhost:11434)
-  OLLAMA_MODEL    Model to use for parsing (default: gemma2:2b)
+  OLLAMA_MODEL    Model to use for parsing (default: pfml-parser)
 """
 
 import os
@@ -49,10 +38,8 @@ from shared_core import (
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST") or "http://localhost:11434"
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "pfml-parser")
 
-# The handful of fields worth actively asking about if we can't infer
-# them. Everything else in PARAM_ALIASES/SECTIONS can still be picked up
-# by regex/LLM parsing, but we don't interrogate the user over minor
-# knobs -- only the ones that meaningfully change what gets simulated.
+MAX_IDENTIFICATION_ATTEMPTS = 6
+
 FIELDS_WORTH_ASKING = [
     ("system", "Which alloy system do you want to simulate?"),
     ("NUMPHASES", "How many phases should the simulation have?"),
@@ -61,8 +48,16 @@ FIELDS_WORTH_ASKING = [
     ("NTIMESTEPS", "How many timesteps should it run for?"),
 ]
 
-# Element-name keywords, used as a fallback when no preset name literally
-# appears in the prompt (e.g. "aluminum copper" instead of "Model_Solidification").
+NEW_SYSTEM_QUESTIONS = [
+    ("COMPONENTS", "What are the chemical components/elements? (comma-separated, e.g. Al, Co)"),
+    ("NUMPHASES", "How many phases?"),
+    ("MESH_X", "Grid width (MESH_X)?"),
+    ("MESH_Y", "Grid height (MESH_Y)?"),
+    ("NTIMESTEPS", "How many timesteps?"),
+    ("T", "Simulation temperature (K)?"),
+    ("DIMENSION", "Dimension (2 or 3)?"),
+]
+
 ELEMENT_KEYWORDS = {
     "aluminum": "Al", "aluminium": "Al",
     "zinc": "Zn",
@@ -71,7 +66,13 @@ ELEMENT_KEYWORDS = {
     "molybdenum": "Mo",
     "niobium": "Nb",
     "chromium": "Cr",
+    "cobalt": "Co",
+    "iron": "Fe",
+    "titanium": "Ti",
+    "tungsten": "W",
+    "tantalum": "Ta",
 }
+
 SYSTEM_NAME_ALIASES = {
     "NiAlCr": ["chromium", "chromate", "cr alloy"],
 }
@@ -79,13 +80,8 @@ NUMBER_WORDS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
 }
-# Generic naming tokens that shouldn't be used to disambiguate between
-# presets sharing the same components (e.g. "Model" in "Model_Solidification"
-# vs "Model_Precipitation" -- too common to mean anything on its own).
 GENERIC_NAME_TOKENS = {"model", "example", "examples", "system", "alloy"}
 
-# Phrases indicating the user wants a field left at the preset default,
-# e.g. "keep phases the same" -- treated as answered, not missing.
 UNCHANGED_SIGNAL_WORDS = {
     "NUMPHASES": ["phase", "phases"],
     "MESH_X": ["mesh"],
@@ -93,12 +89,40 @@ UNCHANGED_SIGNAL_WORDS = {
     "NTIMESTEPS": ["timestep", "timesteps", "step", "steps"],
 }
 UNCHANGED_PATTERN = r"(same|unchanged|as[- ]is|no change|keep it)"
+QUIT_COMMANDS = {"quit", "exit", "q", "bye", "goodbye"}
+
+
+def check_input_quality(prompt):
+    """Use Ollama to determine if the input is a meaningful simulation request.
+    Returns (is_meaningful, ai_message_to_user)."""
+    raw = ask_ollama(
+        f"A user is interacting with a materials science phase-field simulation assistant. "
+        f"The assistant helps users run alloy simulations (e.g. NiAl, AlZn, AlCo, etc.) "
+        f"by asking them to describe what they want to simulate.\n\n"
+        f"The user just typed: '{prompt}'\n\n"
+        f"Is this a meaningful request that could relate to alloy simulation, "
+        f"phase-field modeling, thermodynamics, materials science, or specifying "
+        f"simulation parameters (phases, mesh, temperature, components, etc.)? "
+        f"It is OK if it is vague -- the assistant can ask follow-up questions. "
+        f"Only flag it as NOT meaningful if it is pure gibberish, a random keyboard "
+        f"smash, completely unrelated to science/engineering, or just a bare greeting "
+        f"with zero simulation intent.\n\n"
+        f"If YES (meaningful), respond ONLY with: {{\"ok\": true, \"msg\": \"\"}}\n"
+        f"If NO (not meaningful), respond ONLY with: {{\"ok\": false, \"msg\": \"<a short "
+        f"friendly message from you telling the user their input was not understood "
+        f"and asking them to try again, describing the simulation they want>\"}}"
+    )
+    if raw:
+        try:
+            text = re.sub(r"```json\s*|```\s*", "", raw).strip()
+            parsed = json.loads(text)
+            return parsed.get("ok", True), parsed.get("msg", "")
+        except Exception:
+            pass
+    return True, ""
 
 
 def detect_unchanged_fields(prompt):
-    """Return the set of FIELDS_WORTH_ASKING keys the user explicitly
-    said to leave at the preset default (e.g. "keep phases the same"),
-    so translate() doesn't ask about them even though no number was given."""
     skipped = set()
     for key, topic_words in UNCHANGED_SIGNAL_WORDS.items():
         for word in topic_words:
@@ -107,16 +131,46 @@ def detect_unchanged_fields(prompt):
                 skipped.add(key)
                 break
     return skipped
+
+
+def extract_components_from_prompt(prompt):
+    components = []
+    for word, sym in ELEMENT_KEYWORDS.items():
+        if re.search(rf"\b{word}\b", prompt, re.IGNORECASE):
+            if sym not in components:
+                components.append(sym)
+    return components
+
+
+def collect_new_system_info(interactive=True):
+    info = {}
+    for key, question in NEW_SYSTEM_QUESTIONS:
+        if interactive:
+            try:
+                answer = input(f"  {question} ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Using defaults for remaining fields.")
+                answer = ""
+        else:
+            answer = ""
+
+        if key == "COMPONENTS":
+            components = [c.strip().upper() for c in answer.split(",") if c.strip()]
+            info["COMPONENTS"] = components
+            info["NUMCOMPONENTS"] = len(components)
+        elif key in ("MESH_X", "MESH_Y", "NTIMESTEPS", "NUMPHASES", "DIMENSION"):
+            info[key] = _coerce(answer) if answer else None
+        elif key == "T":
+            info[key] = _coerce(answer) if answer else None
+
+    return info
+
+
 # ============================================================================
-# Regex fallback parser (fast, free, no dependencies)
+# Regex fallback parser
 # ============================================================================
 
 def parse_prompt_regex(prompt, system_names=None, systems=None):
-    """Extract a system name and numeric overrides from natural language
-    using plain regex/alias matching. Deliberately conservative -- this
-    is the safety net under the LLM pass, not the primary parser.
-    Returns (system_name | None, overrides_dict).
-    """
     system_names = system_names or []
     preset = None
     overrides = {}
@@ -127,10 +181,6 @@ def parse_prompt_regex(prompt, system_names=None, systems=None):
             preset = name
             break
 
-    # Fallback: no preset name was literally mentioned -- try inferring
-    # it from element keywords (e.g. "aluminum copper" -> Al, Cu), then
-    # disambiguate between same-component presets using a distinctive
-    # word from each candidate's own name (e.g. "solidification").
     if not preset:
         for name, aliases in SYSTEM_NAME_ALIASES.items():
             if name in system_names and any(
@@ -139,9 +189,6 @@ def parse_prompt_regex(prompt, system_names=None, systems=None):
                 preset = name
                 break
 
-    # Manual name aliases -- for presets whose stored COMPONENTS don't
-    # match what their name implies, so element-keyword matching alone
-    # would never resolve them.
     if not preset and systems:
         mentioned = {
             sym.upper() for word, sym in ELEMENT_KEYWORDS.items()
@@ -227,12 +274,6 @@ def _ollama_available():
 
 
 def ask_ollama(user_message, system_prompt=None):
-    """Single-shot call to a local Ollama model. system_prompt is optional
-    -- the production model (pfml-parser) already has the valid systems/
-    params baked into its own Modelfile SYSTEM block via
-    build_modelfile.py, so omitting it here lets Ollama use that baked
-    knowledge. Passing system_prompt explicitly overrides it (useful for
-    testing against a raw base model that wasn't built with build_modelfile.py)."""
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": user_message,
@@ -256,8 +297,6 @@ def ask_ollama(user_message, system_prompt=None):
 
 
 def _extract_numbers(text):
-    """All numeric literals actually present in the user's text, as floats.
-    Used to verify the LLM didn't fabricate a value it wasn't given."""
     matches = re.findall(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", text)
     nums = set()
     for m in matches:
@@ -269,9 +308,6 @@ def _extract_numbers(text):
 
 
 def _is_grounded(value, number_pool, tol=1e-9):
-    """True if `value` (scalar or list) traces back to a number the user
-    actually typed. Non-numeric values (e.g. phase names) always pass --
-    this check only guards against fabricated numbers."""
     if isinstance(value, bool):
         return True
     if isinstance(value, (int, float)):
@@ -282,22 +318,6 @@ def _is_grounded(value, number_pool, tol=1e-9):
 
 
 def parse_prompt_llm(prompt, system_names, known_overrides=None):
-    """Ask the local Ollama model to extract system + overrides.
-    Returns (system_name | None, overrides_dict, mentioned_no_value_keys)
-    or (None, {}, []) on failure. mentioned_no_value_keys lists parameter
-    keys the model believes the user referenced conceptually but for
-    which no grounded number was found in the prompt.
-    Never invents values for fields the user didn't mention.
-
-    Small local models don't reliably obey "don't guess" instructions in
-    their own system prompt -- they'll often fill in a plausible-looking
-    number anyway (e.g. inventing tau=2.5 when the user only said "slow
-    down relaxation" with no number). So beyond just asking nicely, every
-    numeric value the model returns is checked against
-    _extract_numbers(prompt) and dropped if it doesn't correspond to a
-    number the user actually typed. This is what actually enforces the
-    "never fabricate" rule.
-    """
     if not _ollama_available():
         return None, {}, []
 
@@ -343,7 +363,7 @@ def parse_prompt_llm(prompt, system_names, known_overrides=None):
 
 
 # ============================================================================
-# Interactive clarification loop
+# Core
 # ============================================================================
 
 def merge_overrides(base, new):
@@ -365,75 +385,163 @@ def missing_fields(system, overrides, skipped=None):
     return missing
 
 
-def translate(initial_text, base_dir, interactive=True):
-    """Run the translate-and-clarify loop. Returns a spec dict:
-    {"system": ..., "overrides": {...}, "raw_prompt": ...}
-    """
-    systems = discover_systems(base_dir)
-    system_names = list(systems.keys())
+def _get_user_input(prompt_text=">>> "):
+    """Get input from user, handling EOF/KeyboardInterrupt and quit commands.
+    Returns (text, should_quit)."""
+    try:
+        text = input(prompt_text).strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  Goodbye.")
+        return "", True
+    if text.lower() in QUIT_COMMANDS:
+        return text, True
+    return text, False
 
-    regex_system, regex_overrides = parse_prompt_regex(initial_text, system_names, systems=systems)
-    llm_system, llm_overrides, mentioned_no_value = parse_prompt_llm(initial_text, system_names)
 
+def _try_parse(prompt, system_names, systems):
+    """Parse a prompt through regex + LLM. Returns (system, overrides)."""
+    regex_system, regex_overrides = parse_prompt_regex(prompt, system_names, systems=systems)
+    llm_system, llm_overrides, _ = parse_prompt_llm(prompt, system_names)
     system = regex_system or llm_system
     overrides = merge_overrides(regex_overrides, llm_overrides)
+    return system, overrides
 
-    # Generic follow-up for ANY parameter the model recognized as
-    # referenced (from its baked MicroSim domain knowledge -- see
-    # build_modelfile.py) but couldn't ground a specific number for.
-    # Not hardcoded to any particular parameter -- works the same way
-    # whether the user's intent maps to tau, epsilon, GAMMA, DIFFUSIVITY,
-    # or anything else the model knows about.
-    for key in mentioned_no_value:
-        if key in overrides:
-            continue  # already resolved by regex or a grounded LLM value
-        while True:
-            ans = input(f"  You mentioned something related to '{key}' -- "
-                        f"what value would you like? (comma-separate multiple "
-                        f"values, or leave blank to skip): ").strip()
-            if not ans:
-                break
-            parts = [p.strip() for p in ans.split(",") if p.strip()]
-            overrides[key] = [_coerce(p) for p in parts] if len(parts) > 1 else _coerce(parts[0])
-            break
 
-    skipped_fields = detect_unchanged_fields(initial_text)
+def _offer_new_system(system_names):
+    """Ask user if they want to create a new system. Returns spec dict or None."""
+    print(f"\n  Available systems: {', '.join(system_names)}")
+    try:
+        answer = input("  Would you like to create a NEW alloy system? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  Goodbye.")
+        return {"system": None, "overrides": {}, "raw_prompt": ""}
 
-    if not interactive:
-        return {"system": system, "overrides": overrides, "raw_prompt": initial_text}
+    if answer in ("y", "yes"):
+        new_info = collect_new_system_info(True)
+        if new_info.get("COMPONENTS"):
+            n_comp = new_info.get("NUMCOMPONENTS", 2)
+            new_info.setdefault("NUMPHASES", n_comp + 1)
+            new_info.setdefault("MESH_X", 100)
+            new_info.setdefault("MESH_Y", 100)
+            new_info.setdefault("NTIMESTEPS", 100000)
+            new_info.setdefault("T", 1000)
+            new_info.setdefault("DIMENSION", 2)
+            return {"system": "NEW", "overrides": new_info, "raw_prompt": ""}
+    return None
 
-    # --- Clarify anything important that's still missing ---
+
+def _prompt_missing_fields(system, overrides, skipped_fields, system_names):
+    """Interactively ask for any FIELDS_WORTH_ASKING that are still missing."""
     missing = missing_fields(system, overrides, skipped_fields)
     while missing:
         key, question = missing[0]
         if key == "system" and system_names:
             print(f"\n  Available systems: {', '.join(system_names)}")
-        try:
-            answer = input(f"  {question} ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n  Stopping -- using what's been gathered so far.")
-            break
-
-        if not answer:
-            # User declined to specify -- stop asking about this field
-            # and fall back to whatever the preset default provides.
+        text, quit = _get_user_input(f"  {question} ")
+        if quit or not text:
             missing.pop(0)
             continue
-
         if key == "system":
-            match = next((s for s in system_names if s.lower() == answer.lower()), None)
+            match = next((s for s in system_names if s.lower() == text.lower()), None)
             if not match:
-                # Try the LLM once more with the direct answer
-                match, extra, _extra_mentioned = parse_prompt_llm(answer, system_names)
+                match, extra, _extra_mentioned = parse_prompt_llm(text, system_names)
                 overrides = merge_overrides(overrides, extra)
-            system = match or answer
+            system = match or text
         else:
-            parts = [p.strip() for p in answer.split(",")]
-            overrides[key] = [_coerce(p) for p in parts] if len(parts) > 1 else _coerce(answer)
-
+            parts = [p.strip() for p in text.split(",")]
+            overrides[key] = [_coerce(p) for p in parts] if len(parts) > 1 else _coerce(text)
         missing = missing_fields(system, overrides, skipped_fields)
+    return system, overrides
 
-    return {"system": system, "overrides": overrides, "raw_prompt": initial_text}
+
+def translate(initial_text, base_dir, interactive=True):
+    systems = discover_systems(base_dir)
+    system_names = list(systems.keys())
+
+    # --- One-shot mode: no interactive loop ---
+    if not interactive:
+        regex_system, regex_overrides = parse_prompt_regex(initial_text, system_names, systems=systems)
+        llm_system, llm_overrides, _ = parse_prompt_llm(initial_text, system_names)
+        system = regex_system or llm_system
+        overrides = merge_overrides(regex_overrides, llm_overrides)
+        prompt_components = extract_components_from_prompt(initial_text)
+
+        if system and system in systems:
+            return {"system": system, "overrides": overrides, "raw_prompt": initial_text}
+        if prompt_components:
+            overrides["COMPONENTS"] = prompt_components
+            overrides["NUMCOMPONENTS"] = len(prompt_components)
+            return {"system": "NEW", "overrides": overrides, "raw_prompt": initial_text}
+        return {"system": None, "overrides": overrides, "raw_prompt": initial_text}
+
+    # --- Interactive mode: loop until system identified or user quits ---
+    prompt = initial_text
+    empty_count = 0
+
+    while True:
+        system, overrides = _try_parse(prompt, system_names, systems)
+
+        # 1. Exact system match found -- clarify missing fields and return
+        if system and system in systems:
+            system, overrides = _prompt_missing_fields(
+                system, overrides, detect_unchanged_fields(prompt), system_names
+            )
+            return {"system": system, "overrides": overrides, "raw_prompt": initial_text}
+
+        # 2. Elements mentioned but don't match any existing system
+        components = extract_components_from_prompt(prompt)
+        if components:
+            comp_set = set(c.upper() for c in components)
+            matched = any(
+                comp_set == set(c.upper() for c in systems[n].get("components", []))
+                for n in system_names
+            )
+            if not matched:
+                result = _offer_new_system(system_names)
+                if result:
+                    result["raw_prompt"] = initial_text
+                    return result
+                # User said no -- keep looping
+                text, quit = _get_user_input()
+                if quit:
+                    return {"system": None, "overrides": {}, "raw_prompt": initial_text}
+                prompt = text
+                empty_count = 0
+                continue
+
+        # 3. Nothing recognizable -- use AI to check if input is garbage
+        meaningful, ai_msg = check_input_quality(prompt)
+        if not meaningful:
+            print(f"  {ai_msg}" if ai_msg else "  Input not recognized. Please try again.")
+            text, quit = _get_user_input()
+            if quit:
+                return {"system": None, "overrides": {}, "raw_prompt": initial_text}
+            if not text:
+                empty_count += 1
+                if empty_count >= 3:
+                    print("  No valid input received. Exiting.")
+                    return {"system": None, "overrides": {}, "raw_prompt": initial_text}
+                continue
+            empty_count = 0
+            prompt = text
+            continue
+
+        # 4. Input is meaningful but couldn't match -- ask for clarification
+        print(f"\n  Available systems: {', '.join(system_names)}")
+        text, quit = _get_user_input(
+            "  I couldn't match that to an existing system. "
+            "Can you describe it differently, or mention a system name? "
+        )
+        if quit:
+            return {"system": None, "overrides": {}, "raw_prompt": initial_text}
+        if not text:
+            empty_count += 1
+            if empty_count >= 3:
+                print("  No valid input received. Exiting.")
+                return {"system": None, "overrides": {}, "raw_prompt": initial_text}
+            continue
+        empty_count = 0
+        prompt = text
 
 
 def main():
@@ -457,13 +565,22 @@ def main():
             show_systems(systems)
         print("  Describe what you want to simulate, e.g.:")
         print("    'AlZn_eutectic with 6 phases, mesh_x 200, mesh_y 200, timesteps 150000'")
+        print("  Or describe a new system: 'aluminum cobalt alloy'")
+        print("  Type 'quit' at any time to exit.\n")
         try:
             text = input(">>> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye.")
             sys.exit(0)
+        if text.lower() in QUIT_COMMANDS:
+            print("Goodbye.")
+            sys.exit(0)
 
     spec = translate(text, args.base_dir, interactive=not args.non_interactive)
+
+    if not spec.get("system"):
+        print("\n  No system selected. Exiting.")
+        sys.exit(1)
 
     print("\n  --- Translated spec ---")
     print(f"  System: {spec['system']}")
