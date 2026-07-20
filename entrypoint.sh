@@ -33,6 +33,33 @@ if [ ! -f /app/build_modelfile.py ] || [ ! -f /app/shared_core.py ]; then
     exit 1
 fi
 
+# --- Compile the microsim_gp solver from the mounted source ---
+# The source (and any edits to it) only exists once mounted at runtime,
+# so this can't happen at image-build time -- it has to happen here,
+# every container start, against whatever's currently on disk.
+MICROSIM_SRC_DIR="${MICROSIM_DIR:-/app/microsim_gp}"
+if [ -f "${MICROSIM_SRC_DIR}/microsim_gp.c" ]; then
+    NEED_BUILD=0
+    if [ ! -x "${MICROSIM_SRC_DIR}/microsim_gp" ]; then
+        NEED_BUILD=1
+    elif [ "${MICROSIM_SRC_DIR}/microsim_gp.c" -nt "${MICROSIM_SRC_DIR}/microsim_gp" ]; then
+        NEED_BUILD=1
+    fi
+
+    if [ "$NEED_BUILD" -eq 1 ]; then
+        echo "entrypoint.sh: compiling microsim_gp..."
+        if (cd "${MICROSIM_SRC_DIR}" && make); then
+            echo "entrypoint.sh: microsim_gp compiled successfully."
+        else
+            echo "entrypoint.sh: WARNING: microsim_gp compile failed. Simulations will not run until this is fixed -- see the make output above." >&2
+        fi
+    else
+        echo "entrypoint.sh: microsim_gp binary already up to date, skipping compile."
+    fi
+else
+    echo "entrypoint.sh: WARNING: ${MICROSIM_SRC_DIR}/microsim_gp.c not found -- did you mount microsim_gp/ correctly?" >&2
+fi
+
 # --- Bake pfml-parser from the mounted source ---
 echo "entrypoint.sh: baking pfml-parser from mounted Example_Systems..."
 python3 /app/build_modelfile.py --base-model "${OLLAMA_BASE_MODEL}" --out-model pfml-parser
