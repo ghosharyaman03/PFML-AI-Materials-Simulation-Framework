@@ -5,11 +5,9 @@ stage2_builder.py
 Takes the structured spec produced by stage1_translator.py and turns it
 into real Input.in / Filling.in files microsim_gp can run.
 
-This stage does NOT invent thermodynamic data. It always starts from the
-existing preset values under Example_Systems/ (ceq/cfill/c_guess, TDB
-choices, etc.) and only reaches for EquilibriumSolver (pycalphad) when
-the user asked for more phases than the preset's existing data covers --
-i.e. only when *more* is genuinely required, exactly as requested.
+Supports two modes:
+  1. Existing system: starts from preset values, applies overrides
+  2. New system: starts from a template, auto-pads all values
 
 Usage:
   python3 stage2_builder.py spec.json -o build_result.json
@@ -33,8 +31,119 @@ from shared_core import (
     find_missing_phase_coverage, prompt_for_missing_thermo_data,
 )
 
+
+def find_template_system(systems, num_components):
+    for name, info in systems.items():
+        n_comp = len(info.get("components", []))
+        if n_comp == num_components:
+            return name
+    best = None
+    best_diff = float('inf')
+    for name, info in systems.items():
+        n_comp = len(info.get("components", []))
+        diff = abs(n_comp - num_components)
+        if diff < best_diff:
+            best_diff = diff
+            best = name
+    return best
+
+
+def generate_default_thermo_data(config, num_components, num_phases):
+    n_values = max(1, num_components - 1)
+    default_comp = [1.0 / num_components] * n_values
+
+    for key in ("ceq", "cfill", "c_guess"):
+        entries = []
+        for i in range(num_phases):
+            for j in range(num_phases):
+                if key == "c_guess":
+                    comp = [round(v * 0.95, 10) for v in default_comp]
+                else:
+                    comp = list(default_comp)
+                entries.append([i, j] + comp)
+        config[key] = entries
+
+    num_pairs = max(1, num_phases * (num_phases - 1) // 2)
+    gamma = config.get("GAMMA", [0.1])
+    if not isinstance(gamma, list):
+        gamma = [gamma]
+    while len(gamma) < num_pairs:
+        gamma.append(gamma[0] if gamma else 0.1)
+    config["GAMMA"] = gamma[:num_pairs]
+
+    dab = config.get("dab", [0.0])
+    if not isinstance(dab, list):
+        dab = [dab]
+    while len(dab) < num_pairs:
+        dab.append(dab[0] if dab else 0.0)
+    config["dab"] = dab[:num_pairs]
+
+    fab = config.get("fab", [0.0])
+    if not isinstance(fab, list):
+        fab = [fab]
+    while len(fab) < num_pairs:
+        fab.append(fab[0] if fab else 0.0)
+    config["fab"] = fab[:num_pairs]
+
+    diff = config.get("DIFFUSIVITY", [])
+    if not isinstance(diff, list) or not diff:
+        diff = []
+    while len(diff) < num_phases:
+        idx = len(diff)
+        diff.insert(len(diff) - 1 if len(diff) > 0 else 0, [1, idx, 1e-7, 1e-7, 1e-7, 0, 0, 0])
+    config["DIFFUSIVITY"] = diff[:num_phases]
+
+    eigen = config.get("EIGEN_STRAIN", [])
+    if not isinstance(eigen, list) or not eigen:
+        eigen = []
+    while len(eigen) < num_phases:
+        idx = len(eigen)
+        eigen.insert(len(eigen) - 1 if len(eigen) > 0 else 0, [idx, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    config["EIGEN_STRAIN"] = eigen[:num_phases]
+
+    voigt = config.get("VOIGT_ISOTROPIC", [])
+    if not isinstance(voigt, list) or not voigt:
+        voigt = []
+    while len(voigt) < num_phases:
+        idx = len(voigt)
+        voigt.insert(len(voigt) - 1 if len(voigt) > 0 else 0, [idx, 100.0, 50.0, 40.0])
+    config["VOIGT_ISOTROPIC"] = voigt[:num_phases]
+
+    for key in ("epsilon", "tau"):
+        val = config.get(key, 0.05)
+        if isinstance(val, list):
+            while len(val) < num_phases:
+                val.append(val[0] if val else 0.05)
+            config[key] = val[:num_phases]
+
+    slopes = config.get("slopes", [])
+    if isinstance(slopes, list):
+        while len(slopes) < num_phases:
+            slopes.append(slopes[0] if slopes else 0.0)
+        config["slopes"] = slopes[:num_phases]
+
+    a_val = config.get("A", [])
+    if isinstance(a_val, list):
+        while len(a_val) < num_phases:
+            a_val.append(a_val[0] if a_val else 1.0)
+        config["A"] = a_val[:num_phases]
+
+    rho = config.get("rho", [])
+    if isinstance(rho, list):
+        while len(rho) < num_phases:
+            rho.append(rho[0] if rho else 1.0)
+        config["rho"] = rho[:num_phases]
+
+    damping = config.get("damping_factor", [])
+    if isinstance(damping, list):
+        while len(damping) < num_phases:
+            damping.append(damping[0] if damping else 1.0)
+        config["damping_factor"] = damping[:num_phases]
+
+    return config
+
+
 def build_config(base_config, overrides=None, interactive=True, allow_solver=False):
-    """Layer user overrides and auto-pad all known phase-dependent arrays."""
     boundary_field_overrides = None
     if overrides:
         boundary_field_overrides = overrides.pop("_boundary_field_overrides", None)
@@ -46,15 +155,6 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
     if overrides:
         for key, val in list(overrides.items()):
             existing = base_config.get(key)
-            # A MULTI_LINE_KEYS parameter (DIFFUSIVITY, EIGEN_STRAIN, ceq,
-            # etc.) is stored as a list of structured per-phase entries,
-            # e.g. [diagonal_flag, phase_index, D11, D22, ...]. If the
-            # preset already stores it that way but an override tries to
-            # replace it with a bare scalar or flat list, silently
-            # accepting that would corrupt the structure the compiled
-            # solver expects -- exactly the kind of malformed input that
-            # crashes microsim_gp instead of failing gracefully. Reject
-            # it here instead of letting it reach the padding logic.
             if (key in MULTI_LINE_KEYS and isinstance(existing, list)
                     and existing and isinstance(existing[0], list)
                     and not (isinstance(val, list) and val and isinstance(val[0], list))):
@@ -79,37 +179,24 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
             for f in BOUNDARY_FIELDS:
                 if f in rows_by_field:
                     ordered.append(rows_by_field.pop(f))
-            ordered.extend(rows_by_field.values())  # preserve any unexpected extra rows
+            ordered.extend(rows_by_field.values())
             config[bkey] = ordered
             print(f"  [Auto-Correction] {bkey} updated for field(s): {', '.join(field_map.keys())} (other fields kept from preset)")
 
-    # 1. Configuration Registry
     num_phases = int(config.get('NUMPHASES', 1))
-    
-    # Comprehensive list of parameters that usually require phase-specific values
-    # Added 'phase_map' to the list below
     num_pairs = max(1, num_phases * (num_phases - 1) // 2)
 
-    # Per-phase parameters (one value per phase). NOTE: epsilon and tau are
-    # deliberately excluded -- they are always scalar values in microsim_gp,
-    # never per-phase arrays. Including them here causes the compiled
-    # solver's own validator to reject the generated Input.in with
-    # "epsilon must be a number, got: list".
     PARAMS_TO_PAD = [
         'ELASTICITY', 'DIFFUSIVITY', 'EIGEN_STRAIN', 'VOIGT_ISOTROPIC',
         'rho', 'damping_factor', 'A', 'ceq', 'cfill', 'c_guess', 'slopes', 'phase_map'
     ]
 
-    # Per-phase-pair parameters (e.g. surface energies)
     PAIRWISE_PARAMS = ['GAMMA', 'Tau', 'dab', 'fab']
 
     PHASE_INDEX_POSITION = {
         'DIFFUSIVITY': 1,
     }
-    # Gamma_abc is a three-phase-junction term: one value per unique triplet
-    # of phases (analogous to GAMMA being one value per pair). Required count
-    # is C(NUMPHASES, 3), floored at 1 -- confirmed against the binary's own
-    # error messages: NUMPHASES=3 -> 1 required, NUMPHASES=4 -> 4 required.
+
     if 'Gamma_abc' in config:
         val = config['Gamma_abc']
         if not isinstance(val, list):
@@ -124,10 +211,6 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
             val = val[:num_triplets]
         config['Gamma_abc'] = val
 
-    # 2. Dynamic Auto-Padding — per-phase
-
-
-    # 2. Dynamic Auto-Padding — per-phase
     for key in PARAMS_TO_PAD:
         if key in config:
             val = config[key]
@@ -152,15 +235,11 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
                 config[key] = val
             elif val and isinstance(val[0], list):
                 if is_pair_indexed:
-                    # ceq/cfill/c_guess entries reference two phase indices [a, b, ...];
-                    # drop any entry that refers to a phase index no longer in range.
                     kept = [e for e in val if int(e[0]) < num_phases and int(e[1]) < num_phases]
                     if len(kept) != len(val):
                         print(f"  [Auto-Correction] {key} trimmed: removed {len(val)-len(kept)} entries referencing phases >= {num_phases}")
                         config[key] = kept
                 elif len(val) > num_phases:
-                    # Indexed single-phase entries; keep only those whose
-                    # phase index (position varies by key) is still valid.
                     idx_pos = PHASE_INDEX_POSITION.get(key, 0)
                     kept = [e for e in val if int(e[idx_pos]) < num_phases]
                     print(f"  [Auto-Correction] {key} too long ({len(val)}). Trimming to {len(kept)} (indexed)")
@@ -169,11 +248,6 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
                 print(f"  [Auto-Correction] {key} too long ({len(val)}). Trimming to {num_phases}")
                 config[key] = val[:num_phases]
 
-    # 2b. Dynamic Auto-Padding — pairwise
-    # Safety net: epsilon/tau must always be scalars in microsim_gp. If
-    # they arrived as a list from anywhere (an old spec.json, a stray
-    # override), collapse back to a single value instead of writing an
-    # invalid Input.in.
     for key in ("epsilon", "tau"):
         if key in config and isinstance(config[key], list):
             if config[key]:
@@ -197,7 +271,6 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
                 print(f"  [Auto-Correction] {key} too long ({len(val)}). Trimming to {num_pairs} (pairwise)")
                 config[key] = val[:num_pairs]
 
-    # 3. Handle PHASES naming specifically
     if 'PHASES' in config:
         phases = config['PHASES']
         if not isinstance(phases, list):
@@ -206,18 +279,13 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
             missing = num_phases - len(phases)
             new_names = [f"beta_{i+1}" for i in range(missing)]
             print(f"  [Auto-Correction] Adding {missing} default phase(s): {', '.join(new_names)} (inserted before the final/reference phase)")
-            # Insert before the last phase so whatever was originally last
-            # (assumed liquid/reference by the compiled solver) stays last.
             insert_at = len(phases) - 1
             phases[insert_at:insert_at] = new_names
             config['PHASES'] = phases
         elif len(phases) > num_phases:
             print(f"  [Auto-Correction] PHASES too long ({len(phases)}). Trimming to {num_phases}")
             config['PHASES'] = phases[:num_phases]
-    
-    # 4. Dynamic solver — extend ceq/cfill/c_guess when phases exceed
-    #    the pre-defined template data.  The original hard error is kept
-    #    as a fallback if the solver is unavailable or fails.
+
     covered_count, missing_pairs = find_missing_phase_coverage(config, num_phases)
 
     if missing_pairs:
@@ -248,10 +316,7 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
                 print(f"  [EquilibriumSolver] Unavailable ({e}).")
             except Exception as e:
                 print(f"  [EquilibriumSolver] Computation failed: {e}.")
-        # else: leave it missing -- the validation loop below raises a
-        # clear error naming exactly which phase(s) lack data.
 
-    # Original validation — catches cases where solver was skipped or failed
     for key in ('ceq', 'cfill', 'c_guess'):
         if key in config:
             entries = config[key]
@@ -269,6 +334,7 @@ def build_config(base_config, overrides=None, interactive=True, allow_solver=Fal
                     raise ValueError(f"Insufficient '{key}' data for NUMPHASES={num_phases}")
 
     return config
+
 
 def write_simulation_files(config, filling_config=None,
                            output_dir="/app/microsim_gp",
@@ -288,10 +354,6 @@ def write_simulation_files(config, filling_config=None,
 
     return input_path, filling_path
 
-
-# ============================================================================
-# MAIN ENTRY POINT
-# ============================================================================
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -318,29 +380,59 @@ def main():
               f"{os.path.join(args.base_dir, 'Example_Systems')}")
         sys.exit(1)
 
-    if system_name and system_name in systems:
-        base_config = systems[system_name]["config"]
-        filling = systems[system_name].get("filling")
-    else:
-        if system_name:
-            print(f"  [builder] System '{system_name}' not recognized. "
-                  f"Available: {', '.join(systems.keys())}")
+    if system_name == "NEW" or (system_name and system_name not in systems):
+        num_components = int(overrides.get("NUMCOMPONENTS", 2))
+        num_phases = int(overrides.get("NUMPHASES", num_components + 1))
+        template_name = find_template_system(systems, num_components)
+
+        if not template_name:
+            print(f"  [builder] ERROR: No template system found for "
+                  f"{num_components}-component system")
             sys.exit(1)
-        system_name = next(iter(systems))
-        print(f"  [builder] No system specified in spec -- defaulting to '{system_name}'")
-        base_config = systems[system_name]["config"]
-        filling = systems[system_name].get("filling")
 
-    print(f"  [builder] System: {system_name}")
-    show_config_diff(base_config, overrides)
+        print(f"  [builder] New system: using '{template_name}' as template "
+              f"({num_components} components, {num_phases} phases)")
+        base_config = copy.deepcopy(systems[template_name]["config"])
+        filling = systems[template_name].get("filling")
 
-    try:
-        config = build_config(base_config, overrides,
-                               interactive=not args.non_interactive,
-                               allow_solver=args.auto_solve)
-    except ValueError as e:
-        print(f"\n  [builder] ERROR: cannot build this configuration: {e}")
-        sys.exit(1)
+        for key, val in overrides.items():
+            base_config[key] = val
+
+        base_config = generate_default_thermo_data(base_config, num_components, num_phases)
+
+        try:
+            config = build_config(base_config, {},
+                                   interactive=not args.non_interactive,
+                                   allow_solver=args.auto_solve)
+        except ValueError as e:
+            print(f"\n  [builder] ERROR: cannot build this configuration: {e}")
+            sys.exit(1)
+
+        system_name = f"NEW_{'_'.join(str(c) for c in overrides.get('COMPONENTS', []))}"
+    else:
+        if system_name and system_name in systems:
+            base_config = systems[system_name]["config"]
+            filling = systems[system_name].get("filling")
+        else:
+            if system_name:
+                print(f"  [builder] System '{system_name}' not recognized. "
+                      f"Available: {', '.join(systems.keys())}")
+                sys.exit(1)
+            system_name = next(iter(systems))
+            print(f"  [builder] No system specified in spec -- defaulting to '{system_name}'")
+            base_config = systems[system_name]["config"]
+            filling = systems[system_name].get("filling")
+
+        print(f"  [builder] System: {system_name}")
+        show_config_diff(base_config, overrides)
+
+        try:
+            config = build_config(base_config, overrides,
+                                   interactive=not args.non_interactive,
+                                   allow_solver=args.auto_solve)
+        except ValueError as e:
+            print(f"\n  [builder] ERROR: cannot build this configuration: {e}")
+            sys.exit(1)
 
     filling = rescale_filling_geometry(filling, base_config, config)
 
@@ -369,3 +461,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
