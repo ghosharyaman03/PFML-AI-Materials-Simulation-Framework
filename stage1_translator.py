@@ -252,7 +252,10 @@ class InputCollector:
                 continue
             try:
                 val = float(text)
-                if not allow_float and val == int(val):
+                if not allow_float:
+                    if val != int(val):
+                        print(f"  '{text}' is not a whole number. Please enter an integer (no decimals).")
+                        continue
                     val = int(val)
                 if min_val is not None and float(val) < min_val:
                     print(f"  Value must be at least {min_val}. Try again.")
