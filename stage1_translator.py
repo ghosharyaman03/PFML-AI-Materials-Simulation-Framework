@@ -252,10 +252,7 @@ class InputCollector:
                 continue
             try:
                 val = float(text)
-                if not allow_float:
-                    if val != int(val):
-                        print(f"  '{text}' is not a whole number. Please enter an integer (no decimals).")
-                        continue
+                if not allow_float and val == int(val):
                     val = int(val)
                 if min_val is not None and float(val) < min_val:
                     print(f"  Value must be at least {min_val}. Try again.")
@@ -623,12 +620,17 @@ def _get_user_input(prompt_text=">>> "):
 
 
 def _try_parse(prompt, system_names, systems):
-    """Parse a prompt through regex + LLM. Returns (system, overrides)."""
+    """Parse a prompt through regex + LLM. Returns (system, overrides,
+    mentioned_no_value) -- the third item lists parameters the LLM
+    recognized as referenced (via its baked MicroSim domain knowledge)
+    but couldn't ground a specific number for, e.g. "interface relaxes
+    faster" -> tau with no number attached."""
     regex_system, regex_overrides = parse_prompt_regex(prompt, system_names, systems=systems)
-    llm_system, llm_overrides, _ = parse_prompt_llm(prompt, system_names)
+    llm_system, llm_overrides, mentioned_no_value = parse_prompt_llm(prompt, system_names)
     system = regex_system or llm_system
     overrides = merge_overrides(regex_overrides, llm_overrides)
-    return system, overrides
+    mentioned_no_value = [k for k in mentioned_no_value if k not in overrides]
+    return system, overrides, mentioned_no_value
 
 
 def _offer_new_system(system_names):
@@ -744,10 +746,28 @@ def translate(initial_text, base_dir, interactive=True):
         # --- Input passed the filter: reset garbage counter and proceed ---
         garbage_count = 0
 
-        system, overrides = _try_parse(prompt, system_names, systems)
+        system, overrides, mentioned_no_value = _try_parse(prompt, system_names, systems)
 
-        # 1. Exact system match found -- clarify missing fields and return
+        # 1. Exact system match found -- ask about anything the model
+        #    recognized as referenced but couldn't ground a number for
+        #    (e.g. "interface relaxes faster" -> tau), then clarify the
+        #    always-required fields, then return.
         if system and system in systems:
+            for key in mentioned_no_value:
+                if key in overrides:
+                    continue  # resolved by regex or a later grounded value
+                text, quit = _get_user_input(
+                    f"  You mentioned something related to '{key}' -- "
+                    f"what value would you like? (comma-separate multiple "
+                    f"values, or leave blank to skip): "
+                )
+                if quit:
+                    return {"system": None, "overrides": {}, "raw_prompt": initial_text}
+                if not text:
+                    continue
+                parts = [p.strip() for p in text.split(",") if p.strip()]
+                overrides[key] = [_coerce(p) for p in parts] if len(parts) > 1 else _coerce(parts[0])
+
             system, overrides, quit = _prompt_missing_fields(
                 system, overrides, detect_unchanged_fields(prompt), system_names
             )
