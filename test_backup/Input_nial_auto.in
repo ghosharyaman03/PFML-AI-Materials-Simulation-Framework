@@ -1,4 +1,0 @@
-[SIMULATION]
-system_name = Ni-Al (Nickel-Aluminum) Isothermal Workspace
-dimensions = 100 100 1
-delta_x = 1e-07
